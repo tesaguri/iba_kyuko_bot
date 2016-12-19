@@ -10,7 +10,7 @@ error-chain = "*"
 hyper = "*"
 kuchiki = "*"
 log = "*"
-oauthcli = "*"
+oauthcli = { version = "*", features = ["hyper"] }
 serde = "*"
 serde_derive = "*"
 serde_yaml = "*"
