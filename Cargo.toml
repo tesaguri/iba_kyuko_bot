@@ -1,0 +1,26 @@
+[package]
+name = "iba_kyuko_bot"
+version = "0.0.0"
+authors = ["daiki"]
+
+[dependencies]
+chrono = { version = "*", features = ["serde"] }
+env_logger = "*"
+error-chain = "*"
+hyper = "*"
+kuchiki = "*"
+log = "*"
+oauthcli = "*"
+serde = "*"
+serde_derive = "*"
+serde_yaml = "*"
+tendril = "*"
+
+[lib]
+name = "iba_kyuko"
+path = "src/lib.rs"
+
+[[bin]]
+name = "iba_kyuko_bot"
+path = "src/main.rs"
+
