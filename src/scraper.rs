@@ -6,10 +6,9 @@ use kuchiki::traits::*;
 use self::tendril::Tendril;
 use self::tendril::fmt::UTF8;
 use self::util::*;
-use std::collections::HashSet;
 use ::Kyuko;
 
-pub fn scrape<T: Into<Tendril<UTF8>>>(html: T) -> Result<(String, HashSet<Kyuko>)> {
+pub fn scrape<T: Into<Tendril<UTF8>>>(html: T) -> Result<(String, Vec<Kyuko>)> {
     // <!-- Example DOM tree (extract) -->
     //
     // <div id="tabbox">
@@ -48,11 +47,11 @@ pub fn scrape<T: Into<Tendril<UTF8>>>(html: T) -> Result<(String, HashSet<Kyuko>
         .as_node().children().next().ok_or_else::<Error,_>(|| "expected text node".into())?;
     let dept = dept.as_text().ok_or_else::<Error,_>(|| "expected text node".into())?.borrow().clone();
 
-    let mut kyukos = HashSet::new();
+    let mut kyukos = Vec::new();
 
     for tbody in document.select("#eventlist > table.citem > tbody").expect("failed to parse the selector") {
         match parse_kyuko_tbody(tbody.as_node()) {
-            Ok(k) => { kyukos.insert(k); },
+            Ok(k) => { kyukos.push(k); },
             Err(e) => {
                 error!("error: {}", e.description());
                 for e in e.iter().skip(1) {

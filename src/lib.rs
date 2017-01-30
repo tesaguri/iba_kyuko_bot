@@ -1,11 +1,10 @@
-#![feature(conservative_impl_trait)]
-#![feature(proc_macro)]
 #![feature(slice_patterns)]
 #![recursion_limit = "1024"]
 
 extern crate chrono;
 #[macro_use]
 extern crate error_chain;
+extern crate hyper;
 extern crate kuchiki;
 #[macro_use]
 extern crate log;

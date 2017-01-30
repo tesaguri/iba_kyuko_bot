@@ -4,23 +4,23 @@ version = "0.0.0"
 authors = ["daiki"]
 
 [dependencies]
-chrono = { version = "*", features = ["serde"] }
+chrono = { version = "<= 0.2.25", features = ["serde"] }
+egg-mode = "*"
 env_logger = "*"
 error-chain = "*"
+futures = "*"
 hyper = "*"
 kuchiki = "*"
 log = "*"
-oauthcli = { version = "*", features = ["hyper"] }
-serde = "*"
-serde_derive = "*"
-serde_yaml = "*"
+rand = "*"
+serde = "< 0.9" # TODO: Update as soon as chrono supports Serde 0.9.
+serde_derive = "< 0.9"
+serde_json = "< 0.9"
+serde_yaml = "< 0.6"
 tendril = "*"
-
-[lib]
-name = "iba_kyuko"
-path = "src/lib.rs"
+twitter-stream = "*"
+url = "*"
 
 [[bin]]
 name = "iba_kyuko_bot"
-path = "src/main.rs"
-
+path = "src/bin/main.rs"
