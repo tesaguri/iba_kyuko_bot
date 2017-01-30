@@ -10,11 +10,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use yaml;
 
-pub struct Interval<F, E=Error> {
+pub struct Interval<F> {
     scheduler: F,
     next: Instant,
     parked: bool,
-    err: PhantomData<E>,
 }
 
 pub struct SyncFile<T> {
@@ -24,13 +23,12 @@ pub struct SyncFile<T> {
     backup_path: PathBuf,
 }
 
-impl<F, E> Interval<F, E> {
+impl<F> Interval<F> {
     pub fn new(scheduler: F) -> Self {
         Interval {
             scheduler: scheduler,
             next: Instant::now(),
             parked: false,
-            err: PhantomData,
         }
     }
 
@@ -47,11 +45,11 @@ impl<F, E> Interval<F, E> {
     }
 }
 
-impl<F, E> Stream for Interval<F, E> where F: Fn() -> Option<Duration> {
+impl<F> Stream for Interval<F> where F: Fn() -> Option<Duration> {
     type Item = ();
-    type Error = E;
+    type Error = Error;
 
-    fn poll(&mut self) -> Poll<Option<()>, E> {
+    fn poll(&mut self) -> Poll<Option<()>, Error> {
         use futures::Async::*;
 
         let now = Instant::now();
