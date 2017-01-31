@@ -4,7 +4,6 @@ use serde::{Serialize, Deserialize};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, Write};
-use std::marker::{PhantomData};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -97,9 +96,9 @@ impl<T> SyncFile<T> {
 
         let exists = exists || path.exists();
         let file = OpenOptions::new().read(true).write(true).create(true).open(path)
-            .chain_err(|| format!("unable to open {:?}", path))?;
+            .chain_err(|| format!("unable to open the file"))?;
         let data = if exists {
-            yaml::from_reader(&file).chain_err(|| format!("failed to load {:?}", path))?
+            yaml::from_reader(&file).chain_err(|| format!("failed to load the file"))?
         } else {
             T::default()
         };

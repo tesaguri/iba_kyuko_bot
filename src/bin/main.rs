@@ -21,23 +21,14 @@ extern crate url;
 
 mod util;
 
-use chrono::Datelike;
 use egg_mode::Token;
-use egg_mode::tweet::DraftTweet;
-use futures::{Future, Stream};
 use hyper::client::{Client, IntoUrl};
-use hyper::header::UserAgent;
-use hyper::status::StatusCode;
 use iba_kyuko_bot::Kyuko;
 use std::collections::HashMap;
-use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::ops::Deref;
 use std::path::Path;
-use std::process;
-use std::time::Duration;
-use twitter_stream::TwitterJsonStream;
 use twitter_stream::messages::{DirectMessage, StreamMessage, UserId};
 use util::{Interval, SyncFile};
 
@@ -61,6 +52,8 @@ struct Env {
         String, // user id
         UserInfo
     >>,
+    short_url_length: i32,
+    short_url_length_https: i32,
     client: Client,
 }
 
@@ -101,6 +94,8 @@ enum Following {
 }
 
 fn main() {
+    use std::process;
+
     if let Err(e) = run() {
         writeln!(&mut io::stderr(), "error: {}", e).unwrap();
         for e in e.iter().skip(1) {
@@ -111,6 +106,11 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    use futures::{Future, Stream};
+    use std::env;
+    use std::time::Duration;
+    use twitter_stream::TwitterJsonStream;
+
     env_logger::init().chain_err(|| "failed to initialize the logger")?;
 
     let working_dir = env::args().nth(1).ok_or("missing a working directory argument")?;
@@ -141,6 +141,7 @@ fn run() -> Result<()> {
 
 impl Env {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
+        use egg_mode::service::{self, Configuration};
         use std::fs;
 
         let path = path.as_ref();
@@ -148,16 +149,16 @@ impl Env {
         let mut path = path.to_owned();
 
         path.push("settings.yaml");
-        let settings = yaml::from_reader(File::open(&path).chain_err(|| "unable to open settings.yaml")?)
-            .chain_err(|| "failed to load the settings.yaml")?;
+        let settings: Settings = yaml::from_reader(File::open(&path).chain_err(|| "unable to open settings.yaml")?)
+            .chain_err(|| "failed to load settings.yaml")?;
         path.pop();
 
         path.push("kyuko.yaml");
-        let cache = SyncFile::new(&path)?;
+        let cache = SyncFile::new(&path).chain_err(|| "unable to open kyuko.yaml")?;
         path.pop();
 
         path.push("users.yaml");
-        let users = SyncFile::new(&path)?;
+        let users = SyncFile::new(&path).chain_err(|| "unable to open users.toml")?;
         path.pop();
 
         path.push("archive.tsv");
@@ -165,16 +166,28 @@ impl Env {
             .chain_err(|| "unable to open archive.tsv")?;
         path.pop();
 
+        let Configuration {
+            short_url_length,
+            short_url_length_https,
+            ..
+        } = service::config(&settings.consumer(), &settings.access())
+            .chain_err(|| "failed to fetch Twitter's service config")?
+            .response;
+
         Ok(Env {
             settings: settings,
             cache: cache,
             users: users,
             archive: archive,
+            short_url_length: short_url_length,
+            short_url_length_https: short_url_length_https,
             client: Client::new(),
         })
     }
 
     pub fn update(&mut self) -> Result<()> {
+        use egg_mode::tweet::DraftTweet;
+
         for url in &self.settings.urls {
             let (dept, mut kyukos) = {
                 let html = self.fetch(url).chain_err(|| format!("failed to fetch {}", url))?;
@@ -207,34 +220,13 @@ impl Env {
                 *cache = new;
             }
 
+            // Post information on Twitter:
             for k in kyukos.drain(..) {
-                const WDAYS: [char; 7] = ['月', '火', '水', '木', '金', '土', '日'];
-
-                let text = if let Some(ref remarks) = k.remarks {
-                    format!("\
-                            {}／{}\n\
-                            {} [{}]\n\
-                            {}年{}月{}日（{}）{}講時\
-                            備考：{}\n\
-                            {}\
-                        ", dept, k.kind, k.title, k.lecturer, k.date.year(), k.date.month(), k.date.day(),
-                        WDAYS[k.date.weekday().num_days_from_monday() as usize], k.periods, remarks, url
-                    )
-                } else {
-                    format!("\
-                            {}／{}\n\
-                            {} [{}]\n\
-                            {}年{}月{}日（{}）{}講時\n\
-                            {}\
-                        ", dept, k.kind, k.title, k.lecturer, k.date.year(), k.date.month(), k.date.day(),
-                        WDAYS[k.date.weekday().num_days_from_monday() as usize], k.periods, url
-                    )
-                };
-
                 // TODO: adjust Tweet length
+                let text = format_tweet(&dept, &k, url, self.short_url_length, self.short_url_length_https);
                 let id = DraftTweet::new(&text)
                     .send(&self.consumer(), &self.access())
-                    .chain_err(|| format!("failed to post a Tweet: {:?}", k))?
+                    .chain_err(|| format!("failed to post a Tweet: {:?}", text))?
                     .id.to_string();
 
                 info!("successfully tweeted: status_id = {}\n{}", id, text);
@@ -266,6 +258,9 @@ impl Env {
     }
 
     fn fetch<U: IntoUrl>(&self, url: U) -> Result<String> {
+        use hyper::header::UserAgent;
+        use hyper::status::StatusCode;
+
         let mut res = self.client
             .get(url)
             .header(UserAgent(self.settings.user_agent.clone()))
@@ -296,4 +291,63 @@ impl Settings {
     fn access<'a>(&'a self) -> Token<'a> {
         Token::new(self.access_key.as_str(), self.access_secret.as_str())
     }
+}
+
+fn format_tweet(dept: &str, k: &Kyuko, url: &str, url_len: i32, url_len_https: i32) -> String {
+    use chrono::Datelike;
+    use egg_mode::text::character_count;
+    use std::borrow::Cow;
+    use std::fmt::Write;
+
+    const WDAYS: [char; 7] = ['月', '火', '水', '木', '金', '土', '日'];
+
+    fn escape<'a, T: Into<Cow<'a, str>>>(s: T) -> Cow<'a, str> {
+        let mut s = s.into();
+
+        macro_rules! replace {
+            ($c:expr) => {
+                if s.contains($c) {
+                    s = s.to_mut().replace($c, concat!($c, ' ')).into();
+                }
+            }
+        }
+
+        replace!('#');
+        replace!('@');
+        replace!('$');
+        replace!('＃');
+        replace!('＠');
+
+        s
+    }
+
+    let mut ret = format!(
+        "\
+            {}／{}\n\
+            {} [{}]\n\
+            {}年{}月{}日（{}）{}講時\n\
+        ",
+        escape(dept), escape(k.kind.as_str()), escape(k.title.as_str()), escape(k.lecturer.as_str()),
+        k.date.year(), k.date.month(), k.date.day(), WDAYS[k.date.weekday().num_days_from_monday() as usize], k.periods
+    );
+
+    if let Some(ref r) = k.remarks {
+        write!(ret, "{}\n", escape(r.as_str())).unwrap();
+    }
+
+    let mut len = character_count(&ret, url_len, url_len_https).0 + 1 + character_count(url, url_len, url_len_https).0;
+    if len > 140 {
+        while len > 140 {
+            let c = ret.pop();
+            #[cfg(debug_assertions)]
+            c.unwrap();
+            len -= 1;
+        }
+        ret.pop();
+        ret.push('…');
+    }
+
+    write!(ret, "\n{}", url).unwrap();
+
+    ret
 }
