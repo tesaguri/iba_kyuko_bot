@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use yaml;
 
+pub const BASE64: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
 pub struct Interval<F> {
     scheduler: F,
     next: Instant,
@@ -137,23 +139,53 @@ impl<T> DerefMut for SyncFile<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.data }
 }
 
+/// Returns an integer representation of the rightmost contiguous digits in `s`.
+pub fn ratoi(s: &str) -> Option<u64> {
+    fn atoi(c: u8) -> Option<u8> {
+        if b'0' <= c && c <= b'9' {
+            Some(c - b'0')
+        } else {
+            None
+        }
+    }
+
+    let mut iter = s.as_bytes().iter().cloned().rev();
+
+    while let Some(b) = iter.next() {
+        if let Some(n) = atoi(b) {
+            let mut ret = n as u64;
+            let mut exp = 1;
+
+            for b in iter {
+                if let Some(n) = atoi(b) {
+                    exp *= 10;
+                    ret += exp * n as u64;
+                } else {
+                    break;
+                }
+            }
+
+            return Some(ret);
+        }
+    }
+
+    None
+}
+
 fn temp_path() -> PathBuf {
     use rand::{self, Rng};
     use std::env;
-    use std::mem;
-
-    const CHARS: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut rng = rand::thread_rng();
 
     loop {
-        let bytes = unsafe {
-            mem::transmute::<_, [u8; 8]>(rng.next_u64())
-        };
-        let chars = bytes.iter().map(|b| CHARS[(b % 64) as usize]);
+        let mut rand = rng.next_u64();
 
         let mut name = b".".to_vec();
-        name.extend(chars);
+        for _ in 0..10 {
+            name.push(BASE64[(rand % 64) as usize]);
+            rand >>= 6;
+        }
         name.extend_from_slice(b".tmp");
         let name = unsafe { String::from_utf8_unchecked(name) };
 
@@ -163,5 +195,19 @@ fn temp_path() -> PathBuf {
         if !path.exists() {
             return path;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rdigits_test() {
+        assert_eq!(Some(1234567890), ratoi("1234567890"));
+        assert_eq!(Some(145344012), ratoi("https://twitter.com/Twitter/status/145344012"));
+        assert_eq!(Some(815348177809408001), ratoi("https://twitter.com/Twitter/status/815348177809408001/"));
+        assert_eq!(Some(600324682190053376), ratoi("https://twitter.com/POTUS44/status/600324682190053376"));
+        assert_eq!(None, ratoi("https://twitter.com/Twitter/"));
     }
 }
