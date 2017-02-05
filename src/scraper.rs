@@ -157,17 +157,17 @@ mod util {
             }}
         }
 
-        for a in src.as_bytes().split(|&c| (c < b'0' || b'9' < c) && c != b'-') {
+        for a in src.as_bytes().split(|&c| !isdigit(c) && c != b'-') {
             for w in a.windows(3) {
-                match w {
-                    &[c, b'-', d] if isdigit(c) && isdigit(d) => ret.extend(atoi(c)..(atoi(d)+1)),
-                    &[_, _, c] => push!(c),
-                    _ => unreachable!(),
+                match *w {
+                    [c, b'-', d] if isdigit(c) && isdigit(d) => ret.extend(atoi(c)..(atoi(d)+1)),
+                    [_, _, c] => push!(c),
+                    _ => unreachable!(), // `windows` returns nothing if `slice.len() < 3`.
                 }
             }
 
-            for &c in a.get(0) { push!(c); }
-            for &c in a.get(1) { push!(c); }
+            if let Some(&c) = a.get(0) { push!(c); }
+            if let Some(&c) = a.get(1) { push!(c); }
         }
 
         Periods::from(ret)

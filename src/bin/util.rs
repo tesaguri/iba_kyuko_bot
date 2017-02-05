@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use yaml;
 
-pub const BASE64: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 pub struct Interval<F> {
     scheduler: F,
@@ -22,6 +22,11 @@ pub struct SyncFile<T> {
     file: File,
     path: PathBuf,
     backup_path: PathBuf,
+}
+
+pub struct WriteTrace<'a, T: 'a> {
+    reference: &'a mut T,
+    was_written: bool,
 }
 
 impl<F> Interval<F> {
@@ -98,9 +103,9 @@ impl<T> SyncFile<T> {
 
         let exists = exists || path.exists();
         let file = OpenOptions::new().read(true).write(true).create(true).open(path)
-            .chain_err(|| format!("unable to open the file"))?;
+            .chain_err(|| "unable to open the file")?;
         let data = if exists {
-            yaml::from_reader(&file).chain_err(|| format!("failed to load the file"))?
+            yaml::from_reader(&file).chain_err(|| "failed to load the file")?
         } else {
             T::default()
         };
@@ -137,6 +142,29 @@ impl<T> Deref for SyncFile<T> {
 
 impl<T> DerefMut for SyncFile<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.data }
+}
+
+impl<'a, T> WriteTrace<'a, T> {
+    pub fn new(reference: &'a mut T) -> Self {
+        WriteTrace {
+            reference: reference,
+            was_written: false,
+        }
+    }
+
+    pub fn was_written(&self) -> bool { self.was_written }
+}
+
+impl<'a, T: 'a> Deref for WriteTrace<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T { self.reference }
+}
+
+impl<'a, T: 'a> DerefMut for WriteTrace<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.was_written = true;
+        self.reference
+    }
 }
 
 /// Returns an integer representation of the rightmost contiguous digits in `s`.
@@ -195,6 +223,19 @@ fn temp_path() -> PathBuf {
         if !path.exists() {
             return path;
         }
+    }
+}
+
+pub fn radix64(mut n: u64) -> String {
+    let mut ret = Vec::new();
+
+    while n != 0 {
+        ret.push(BASE64[n as usize % 64]);
+        n >>= 6;
+    }
+
+    unsafe {
+        String::from_utf8_unchecked(ret)
     }
 }
 
