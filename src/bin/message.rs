@@ -1,17 +1,10 @@
-use {Following, Tweeted, UserInfo};
+use {Follow, Tweeted, UserInfo};
 use errors::*;
 use std::fmt::Write;
 use twitter_stream::messages::{User, UserId};
 use util::{self, SyncFile};
 
 const WRITE_FAILED: &'static str = "failed to write a message to a String";
-
-macro_rules! try_opt {
-    ($opt:expr) => {
-        if let Some(v) = $opt { v }
-        else { continue; }
-    };
-}
 
 macro_rules! respond {
     ($dst:expr, $lang:expr, $fmt_ja:expr, $fmt_en:expr, $($args:tt)*) => {
@@ -67,9 +60,9 @@ pub fn message(text: String, sender: User, sender_info: &mut UserInfo, recipient
 fn follow<'a, I: Iterator<Item=&'a str>>(mut tokens: I, response: &mut String,
     sender: &mut UserInfo, lang: &str, recipient_screen_name: &str, tweeted: &SyncFile<Tweeted>) -> Result<()>
 {
-    use Following::*;
+    use Follow::*;
 
-    fn register_inner(f: Following, sender: &mut UserInfo, response: &mut String, lang: &str,
+    fn register_inner(f: Follow, sender: &mut UserInfo, response: &mut String, lang: &str,
         recipient_screen_name: &str, tweeted: &SyncFile<Tweeted>) -> Result<()>
     {
         macro_rules! insert {
@@ -170,8 +163,10 @@ fn follow<'a, I: Iterator<Item=&'a str>>(mut tokens: I, response: &mut String,
                     register!(Pattern { title: t.to_owned(), lecturer: None });
                 }
 
-                for t in tokens.by_ref() {
-                    register!(TweetId(try_opt!(util::ratoi(t))));
+                for tweet in tokens.by_ref() {
+                    if let Some(id) = util::ratoi(tweet) {
+                        register!(TweetId(id));
+                    }
                 }
             },
             t => {
@@ -183,7 +178,7 @@ fn follow<'a, I: Iterator<Item=&'a str>>(mut tokens: I, response: &mut String,
         }
     }
 
-    if let Some(t) = title.take() {
+    if let Some(t) = title {
         register!(Pattern { title: t.to_owned(), lecturer: None });
     }
 
@@ -195,19 +190,19 @@ fn unfollow<'a, I: Iterator<Item=&'a str>>(tokens: I, response: &mut String, sen
 {
     for id in tokens {
         match sender.following.remove(id) {
-            Some(Following::Pattern { title, lecturer: None }) => respondln!(
+            Some(Follow::Pattern { title, lecturer: None }) => respondln!(
                 response, lang,
                 "ID {}（{}）の情報のフォローを解除しました。",
                 "Unfollowed lecture information of \"{}\": \"{}\".",
                 id, title
             ),
-            Some(Following::Pattern { title, lecturer: Some(lecturer) }) => respondln!(
+            Some(Follow::Pattern { title, lecturer: Some(lecturer) }) => respondln!(
                 response, lang,
                 "ID {}（{} [{}]）の情報のフォローを解除しました。",
                 "Unfollowed lecture information of \"{}\": \"{}\" by {}.",
                 id, title, lecturer
             ),
-            Some(Following::TweetId(tweet_id)) => respondln!(
+            Some(Follow::TweetId(tweet_id)) => respondln!(
                 response, lang,
                 "ID {}（https://twitter.com/{}/status/{}）の情報のフォローを解除しました。",
                 "Unfollowed lecture information of \"{}\"(https://twitter.com/{}/status/{})",
@@ -233,15 +228,15 @@ fn list(response: &mut String, sender: &User, sender_info: &UserInfo, recipient_
 
 	for (id, follow) in &sender_info.following {
 		match *follow {
-			Following::Pattern { ref title, lecturer: None } => respondln!(
+			Follow::Pattern { ref title, lecturer: None } => respondln!(
 				response, sender.lang,
 				"・{}（ID: {}）", "* \"{}\" (ID: {})", title, id
 			),
-			Following::Pattern { ref title, lecturer: Some(ref lecturer) } => respondln!(
+			Follow::Pattern { ref title, lecturer: Some(ref lecturer) } => respondln!(
 				response, sender.lang,
 				"・{}［{}］（ID: {}）", "* \"{}\" by {} (ID: {})", title, lecturer, id
 			),
-			Following::TweetId(tweet_id) => respondln!(
+			Follow::TweetId(tweet_id) => respondln!(
 				response, sender.lang,
 				"・https://twitter.com/{}/status/{}（ID: {}）",
 				"* https://twitter.com/{}/status/{} (ID: {})",

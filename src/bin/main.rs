@@ -59,14 +59,14 @@ fn default_user_agent() -> String {
 pub struct UserInfo {
     following: HashMap<
         String, // id in radix-64
-        Following
+        Follow
     >,
     next_id: u64,
     // TODO: rate limit
 }
 
 #[derive(Serialize, Deserialize, PartialEq)]
-enum Following {
+enum Follow {
     #[serde(rename = "pattern")]
     Pattern {
         title: String,
@@ -84,6 +84,7 @@ type Tweeted = HashMap<
         Kyuko
     >
 >;
+
 type UserMap = HashMap<
     String, // user id
     UserInfo,
@@ -151,6 +152,7 @@ fn run() -> Result<()> {
     }).wait()
 }
 
+/// Load configuration files under the specified directory.
 fn load<P: AsRef<Path>>(working_dir: P) -> Result<(SyncFile<Tweeted>, SyncFile<UserMap>, Settings, File)> {
     use std::fs;
 
@@ -176,15 +178,6 @@ fn load<P: AsRef<Path>>(working_dir: P) -> Result<(SyncFile<Tweeted>, SyncFile<U
         .chain_err(|| "unable to open archive.tsv")?;
 
     Ok((tweeted, users, settings, archive))
-}
-
-impl Settings {
-    fn token(&self) -> Token {
-        Token::Access {
-            consumer: KeyPair::new(self.consumer_key.as_str(), self.consumer_secret.as_str()),
-            access: KeyPair::new(self.access_key.as_str(), self.access_secret.as_str()),
-        }
-    }
 }
 
 fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: &Settings, archive: &File,
@@ -236,6 +229,7 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
         Ok(())
     }
 
+    use egg_mode::direct;
     use egg_mode::tweet::DraftTweet;
 
     for url in &settings.urls {
@@ -251,15 +245,24 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
             // Retain information to post.
             kyukos.retain(|k| !tweeted_kyukos.values().any(|c| c == k));
 
-            // Post information to Twitter:
             for k in kyukos.drain(..) {
                 let text = format_tweet(&dept, &k, url, url_len);
+
+                // Post the information to Twitter:
                 let id = DraftTweet::new(&text)
                     .send(&settings.token())
                     .chain_err(|| format!("failed to post a Tweet: {:?}", text))?
                     .id;
-
                 info!("successfully tweeted: status_id = {}\n{}", id, text);
+
+                // Send notifications to users following the information:
+                for (user_id, _) in users.iter().filter(|&(_, u)| u.following.values().any(|f| f.matches(&k))) {
+                    let user_id: u64 = user_id.parse()
+                        .chain_err(|| format!("invalid user ID in {:?}", users.file_name()))?;
+                    if let Err(e) = direct::send(user_id, &text, &settings.token()) {
+                        warn!("failed to send a direct message {:?}\ncaused by: {:?}", text, e);
+                    }
+                }
 
                 tweeted_kyukos.insert(id.to_string(), k);
             }
@@ -347,4 +350,23 @@ fn format_tweet(dept: &str, k: &Kyuko, url: &str, url_len: (i32, i32)) -> String
     write!(ret, "\n{}", url).unwrap();
 
     ret
+}
+
+impl Follow {
+    fn matches(&self, k: &Kyuko) -> bool {
+        if let Follow::Pattern { ref title, ref lecturer } = *self {
+            k.title.contains(title) && lecturer.as_ref().map(|l| k.lecturer.contains(l)).unwrap_or(true)
+        } else {
+            false
+        }
+    }
+}
+
+impl Settings {
+    fn token(&self) -> Token {
+        Token::Access {
+            consumer: KeyPair::new(self.consumer_key.as_str(), self.consumer_secret.as_str()),
+            access: KeyPair::new(self.access_key.as_str(), self.access_secret.as_str()),
+        }
+    }
 }

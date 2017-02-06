@@ -1,7 +1,7 @@
 use errors::*;
 use futures::{Poll, Stream};
 use serde::{Serialize, Deserialize};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, Write};
 use std::ops::{Deref, DerefMut};
@@ -132,6 +132,10 @@ impl<T> SyncFile<T> {
         self.file.flush().chain_err(|| "failed to update the file")?;
 
         fs::remove_file(&self.backup_path).chain_err(|| "failed to delete a backup file")
+    }
+
+    pub fn file_name(&self) -> &OsStr {
+        self.path.file_name().unwrap()
     }
 }
 
