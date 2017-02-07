@@ -4,7 +4,7 @@ version = "0.0.0"
 authors = ["daiki"]
 
 [dependencies]
-chrono = { version = "<= 0.2.25", features = ["serde"] }
+chrono = { version = "0.3", features = ["serde"] }
 egg-mode = "0.8"
 env_logger = "*"
 error-chain = "*"
@@ -13,10 +13,10 @@ hyper = "*"
 kuchiki = "*"
 log = "*"
 rand = "*"
-serde = "< 0.9" # TODO: Update as soon as chrono supports Serde 0.9.
-serde_derive = "< 0.9"
-serde_json = "< 0.9"
-serde_yaml = "< 0.6"
+serde = "0.9"
+serde_derive = "0.9"
+serde_json = "0.9"
+serde_yaml = "0.6"
 tendril = "*"
 twitter-stream = "*"
 url = "*"
