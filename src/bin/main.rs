@@ -20,7 +20,6 @@ extern crate serde_derive;
 extern crate serde_json as json;
 extern crate serde_yaml as yaml;
 extern crate twitter_stream;
-extern crate url;
 
 mod config;
 mod daemon_main;
