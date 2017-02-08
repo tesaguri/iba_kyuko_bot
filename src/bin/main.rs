@@ -1,6 +1,7 @@
 #![recursion_limit = "1024"]
 
 extern crate chrono;
+#[macro_use]
 extern crate clap;
 extern crate egg_mode;
 extern crate either;
@@ -54,11 +55,10 @@ fn run() -> Result<()> {
 
     env_logger::init().chain_err(|| "failed to initialize env_logger")?;
 
-    let matches = clap::App::new(env!("CARGO_PKG_NAME"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .author(env!("CARGO_PKG_AUTHORS"))
-        .about("Fetches lecture information (cancellation, supplement, etc.) from Ibaraki University's website and \
-            posts it to Twitter")
+    // A trick to make the compiler rebuild this file when `Cargo.toml` is changed, described in clap's documentation.
+    include_str!("../../Cargo.toml");
+
+    let matches = app_from_crate!()
         .arg(Arg::with_name("WORKING_DIR")
             .help("Sets the working directory to store settings and caches in")
             .required(true)
