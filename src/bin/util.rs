@@ -113,7 +113,7 @@ impl<T> SyncFile<T> {
             T::default()
         };
 
-        let mut ret = SyncFile {
+        let ret = SyncFile {
             data: data,
             file: file,
             path: path.to_owned(),
@@ -127,19 +127,23 @@ impl<T> SyncFile<T> {
         Ok(ret)
     }
 
-    pub fn commit(&mut self) -> Result<()> where T: Serialize {
+    pub fn commit(&self) -> Result<()> where T: Serialize {
         use std::io::SeekFrom;
 
+        debug!("SyncFile::commit: commiting changes to {:?}", self.path);
+
         let temp = temp_path();
+
         debug!("creating a backup {:?}", temp);
         fs::copy(&self.path, &temp).chain_err(|| "failed to make a backup")?;
-
         fs::rename(temp, &self.backup_path).chain_err(|| format!("failed to make a backup to {:?}", self.backup_path))?;
 
-        self.file.seek(SeekFrom::Start(0)).chain_err(|| "failed to update the file")?;
-        self.file.set_len(0).chain_err(|| "failed to update the file")?;
-        yaml::to_writer(&mut self.file, &self.data).chain_err(|| "failed to update the file")?;
-        self.file.flush().chain_err(|| "failed to update the file")?;
+        let mut w = &self.file;
+
+        w.seek(SeekFrom::Start(0)).chain_err(|| "failed to update the file")?;
+        w.set_len(0).chain_err(|| "failed to update the file")?;
+        yaml::to_writer(&mut w, &self.data).chain_err(|| "failed to update the file")?;
+        w.flush().chain_err(|| "failed to update the file")?;
 
         fs::remove_file(&self.backup_path).chain_err(|| "failed to delete a backup file")
     }
