@@ -214,12 +214,13 @@ fn load<P: AsRef<Path>>(working_dir: P) -> Result<(SyncFile<Tweeted>, SyncFile<U
 fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: &Settings, archive: &File,
     client: &Client, url_len: (i32, i32)) -> Result<()>
 {
-    fn fetch(url: &str, client: &Client, user_agent: &str) -> Result<String> {
-        use hyper::header::UserAgent;
+    fn fetch(url: &str, client: &Client, user_agent: &str, keep_alive: bool) -> Result<String> {
+        use hyper::header::{Connection, UserAgent};
         use hyper::status::StatusCode;
 
         let mut res = client
             .get(url)
+            .header(if keep_alive { Connection::keep_alive() } else { Connection::close() })
             .header(UserAgent(user_agent.to_owned()))
             .send()
             .chain_err(|| "failed to make an HTTP request")?;
@@ -263,11 +264,16 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
     use egg_mode::direct;
     use egg_mode::tweet::DraftTweet;
 
-    for url in &settings.urls {
-        let (dept, mut kyukos) = {
-            let html = fetch(url, client, &settings.user_agent).chain_err(|| format!("failed to fetch {}", url))?;
-            iba_kyuko_bot::scrape(html).chain_err(|| format!("failed to scrape {}", url))?
-        };
+    // Eagarly evaluate HTTP connections to prevent disconnection from the server.
+    let mut buf = Vec::new();
+    for (i, url) in settings.urls.iter().enumerate() {
+        let html = fetch(url, client, &settings.user_agent, i+1 < settings.urls.len())
+            .chain_err(|| format!("failed to fetch {}", url))?;
+        buf.push(html);
+    }
+
+    for (url, html) in settings.urls.iter().zip(buf.drain(..)) {
+        let (dept, mut kyukos) = iba_kyuko_bot::scrape(html).chain_err(|| format!("failed to scrape {}", url))?;
 
         {
             let mut tweeted_kyukos = tweeted.entry(dept.clone()).or_insert_with(HashMap::new);
@@ -356,7 +362,7 @@ fn format_tweet(dept: &str, k: &Kyuko, url: &str, url_len: (i32, i32)) -> String
         "\
             {}／{}\n\
             {} [{}]\n\
-            {}年{}月{}日（{}）{}講時\n\
+            {}年{}月{}日（{}）{}講時\
         ",
         escape(dept), escape(k.kind.as_str()), escape(k.title.as_str()), escape(k.lecturer.as_str()),
         k.date.year(), k.date.month(), k.date.day(), WDAYS[k.date.weekday().num_days_from_monday() as usize], k.periods
