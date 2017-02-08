@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use yaml;
 
-const BASE64: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const RADIX64: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
 
 pub struct Interval<F> {
     scheduler: F,
@@ -78,8 +78,10 @@ impl<F> Stream for Interval<F> where F: Fn() -> Option<Duration> {
 }
 
 impl<T> SyncFile<T> {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> where T: Default + Deserialize {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> where T: Default + Serialize + Deserialize {
         let path = path.as_ref();
+
+        debug!("SyncFile::new: opening {:?}", path);
 
         let backup_path = if let Some(n) = path.file_name() {
             let mut name = OsString::from(".");
@@ -90,11 +92,12 @@ impl<T> SyncFile<T> {
             path.set_file_name(name);
             path
         } else {
-            return Err("expecting a file name".into());
+            return Err("expected a file name".into());
         };
 
         let exists = backup_path.exists();
         if exists {
+            info!("the last session has aborted unexpectedly; recovering the file");
             if path.exists() {
                 fs::remove_file(path).chain_err(|| "failed to remove a corrupt file")?;
             }
@@ -110,21 +113,28 @@ impl<T> SyncFile<T> {
             T::default()
         };
 
-        Ok(SyncFile {
+        let mut ret = SyncFile {
             data: data,
             file: file,
             path: path.to_owned(),
             backup_path: backup_path,
-        })
+        };
+
+        if !exists {
+            ret.commit().chain_err(|| "failed to initialize the file")?;
+        }
+
+        Ok(ret)
     }
 
     pub fn commit(&mut self) -> Result<()> where T: Serialize {
         use std::io::SeekFrom;
 
         let temp = temp_path();
+        debug!("creating a backup {:?}", temp);
         fs::copy(&self.path, &temp).chain_err(|| "failed to make a backup")?;
 
-        fs::rename(temp, &self.backup_path).chain_err(|| "failed to make a backup")?;
+        fs::rename(temp, &self.backup_path).chain_err(|| format!("failed to make a backup to {:?}", self.backup_path))?;
 
         self.file.seek(SeekFrom::Start(0)).chain_err(|| "failed to update the file")?;
         self.file.set_len(0).chain_err(|| "failed to update the file")?;
@@ -215,7 +225,7 @@ fn temp_path() -> PathBuf {
 
         let mut name = b".".to_vec();
         for _ in 0..10 {
-            name.push(BASE64[(rand % 64) as usize]);
+            name.push(RADIX64[(rand % 64) as usize]);
             rand >>= 6;
         }
         name.extend_from_slice(b".tmp");
@@ -234,7 +244,7 @@ pub fn radix64(mut n: u64) -> String {
     let mut ret = Vec::new();
 
     while n != 0 {
-        ret.push(BASE64[n as usize % 64]);
+        ret.push(RADIX64[n as usize % 64]);
         n >>= 6;
     }
 

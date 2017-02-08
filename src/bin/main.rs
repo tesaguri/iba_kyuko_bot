@@ -157,6 +157,8 @@ fn load<P: AsRef<Path>>(working_dir: P) -> Result<(SyncFile<Tweeted>, SyncFile<U
     use std::fs;
 
     let path = working_dir.as_ref();
+    debug!("load: loading the working directory {:?}", path);
+
     fs::create_dir_all(path).chain_err(|| format!("unable to create the working directory {:?}", path))?;
     let mut path = path.to_owned();
 
