@@ -11,7 +11,7 @@ error-chain = "*"
 futures = "*"
 hyper = "*"
 kuchiki = "*"
-log = "*"
+log = { version = "*", default-features = false }
 rand = "*"
 serde = "0.9"
 serde_derive = "0.9"
