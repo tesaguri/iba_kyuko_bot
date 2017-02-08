@@ -5,6 +5,7 @@ authors = ["daiki"]
 
 [dependencies]
 chrono = { version = "0.3", features = ["serde"] }
+clap = "*"
 egg-mode = "0.8"
 env_logger = "*"
 error-chain = "*"

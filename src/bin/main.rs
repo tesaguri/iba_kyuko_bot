@@ -1,6 +1,7 @@
 #![recursion_limit = "1024"]
 
 extern crate chrono;
+extern crate clap;
 extern crate egg_mode;
 extern crate env_logger;
 #[macro_use]
@@ -22,13 +23,14 @@ extern crate url;
 mod message;
 mod util;
 
-use egg_mode::{KeyPair, Token};
+use egg_mode::{KeyPair, Token, tweet};
 use hyper::client::Client;
 use iba_kyuko_bot::Kyuko;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::process;
 use twitter_stream::messages::{DirectMessage, StreamMessage, UserId};
 use util::{Interval, SyncFile, WriteTrace};
 
@@ -103,26 +105,53 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    use egg_mode::service::{self, Configuration};
+    use clap::Arg;
+    use egg_mode::service;
     use futures::{Future, Stream};
-    use std::env;
     use std::time::Duration;
     use twitter_stream::TwitterJsonStream;
 
     env_logger::init().chain_err(|| "failed to initialize the logger")?;
 
-    let working_dir = env::args().nth(1).ok_or("missing a working directory argument")?;
+    let matches = clap::App::new(env!("CARGO_PKG_NAME"))
+        .version(env!("CARGO_PKG_VERSION"))
+        .author(env!("CARGO_PKG_AUTHORS"))
+        .about("Fetches lecture information (cancellation, supplement, etc.) from Ibaraki University's website and \
+            posts it to Twitter")
+        .arg(Arg::with_name("WORKING_DIR")
+            .help("Sets the working directory to store settings and caches in")
+            .required(true)
+            .index(1))
+        .arg(Arg::with_name("remove")
+            .short("r")
+            .long("remove")
+            .value_name("STATUS_ID")
+            .multiple(true)
+            .help("Removes the specified Tweet")
+            .takes_value(true))
+        .arg(Arg::with_name("remove-all")
+            .long("remove-all")
+            .help("Removes all Tweets"))
+        .get_matches();
+
+    let working_dir = matches.value_of("WORKING_DIR").unwrap();
     let (mut tweeted, mut users, settings, archive) = load(working_dir)?;
     let url_len = {
-        let Configuration {
-            short_url_length,
-            short_url_length_https,
-            ..
-        } = service::config(&settings.token())
+        let conf = service::config(&settings.token())
             .chain_err(|| "failed to fetch Twitter's service config")?
             .response;
-        (short_url_length, short_url_length_https)
+        (conf.short_url_length, conf.short_url_length_https)
     };
+
+    if let Some(ids) = matches.values_of("remove") {
+        remove(ids, tweeted, &settings.token())?;
+        process::exit(0);
+    }
+
+    if matches.is_present("remove-all") {
+        remove_all(tweeted, &settings.token())?;
+        process::exit(0);
+    }
 
     let dms = TwitterJsonStream::user(
         &settings.consumer_key, &settings.consumer_secret,
@@ -352,6 +381,59 @@ fn format_tweet(dept: &str, k: &Kyuko, url: &str, url_len: (i32, i32)) -> String
     write!(ret, "\n{}", url).unwrap();
 
     ret
+}
+
+fn remove<'a, I: 'a + Iterator<Item=&'a str>>(ids: I, mut tweeted: SyncFile<Tweeted>, token: &Token) -> Result<()> {
+    for id in ids {
+        info!("removing Tweet ID {}", id);
+
+        for tweets in tweeted.values_mut() {
+            tweets.remove(id);
+        }
+
+        let id = match id.parse() {
+            Ok(id) => id,
+            Err(_) => clap::Error::with_description(
+                &format!("invalid status id: {}", id),
+                clap::ErrorKind::InvalidValue
+            ).exit(),
+        };
+
+        tweet::delete(id, token).chain_err(|| format!("failed to remove a Tweet (ID: {})", id))?;
+        tweeted.commit()?;
+    }
+
+    Ok(())
+}
+
+fn remove_all(mut tweeted: SyncFile<Tweeted>, token: &Token) -> Result<()> {
+    // TODO: explore better way to handle ownerships.
+    loop {
+        if let Some((dept, id)) = tweeted.iter()
+            .filter_map(|(dept, tweets)| {
+                tweets.keys().map(|id| (dept.clone(), id.clone())).next()
+            }).next()
+        {
+            info!("removing Tweet ID {}", id);
+
+            let is_empty = {
+                let tweets = tweeted.get_mut(dept.as_str()).unwrap();
+                tweets.remove(id.as_str());
+                tweets.is_empty()
+            };
+
+            if is_empty {
+                tweeted.remove(dept.as_str());
+            }
+
+            let id = id.parse().chain_err(|| format!("invalid status id {:?} in {:?}", id, tweeted.file_name()))?;
+            tweet::delete(id, token).chain_err(|| format!("failed to remove a Tweet (ID: {})", id))?;
+
+            tweeted.commit()?;
+        } else {
+            return Ok(());
+        }
+    }
 }
 
 impl Follow {
