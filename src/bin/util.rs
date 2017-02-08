@@ -3,7 +3,6 @@ use futures::{Poll, Stream};
 use serde::{Serialize, Deserialize};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Seek, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -128,7 +127,7 @@ impl<T> SyncFile<T> {
     }
 
     pub fn commit(&self) -> Result<()> where T: Serialize {
-        use std::io::SeekFrom;
+        use std::io::{Seek, SeekFrom, Write};
 
         debug!("SyncFile::commit: commiting changes to {:?}", self.path);
 
