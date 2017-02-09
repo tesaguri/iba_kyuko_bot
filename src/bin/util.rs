@@ -10,8 +10,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use yaml;
 
-const RADIX64: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
-
 pub struct Schedule<F> {
     scheduler: F,
     next: Instant,
@@ -226,6 +224,8 @@ fn temp_path() -> PathBuf {
     use rand::{self, Rng};
     use std::env;
 
+    const RADIX64: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
+
     let mut rng = rand::thread_rng();
 
     loop {
@@ -245,19 +245,6 @@ fn temp_path() -> PathBuf {
         if !path.exists() {
             return path;
         }
-    }
-}
-
-pub fn radix64(mut n: u64) -> String {
-    let mut ret = Vec::new();
-
-    while n != 0 {
-        ret.push(RADIX64[n as usize % 64]);
-        n >>= 6;
-    }
-
-    unsafe {
-        String::from_utf8_unchecked(ret)
     }
 }
 

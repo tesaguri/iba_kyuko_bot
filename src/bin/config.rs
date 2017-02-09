@@ -45,7 +45,7 @@ pub fn default_user_agent() -> String {
 #[derive(Default, Serialize, Deserialize)]
 pub struct UserInfo {
     pub following: HashMap<
-        String, // id in radix-64
+        String, // id
         Follow
     >,
     pub next_id: u64,
@@ -137,7 +137,7 @@ impl UserInfo {
             },
         };
 
-        let id = ::util::radix64(self.next_id);
+        let id = self.next_id.to_string();
         self.following.insert(id.clone(), target);
         self.next_id += 1;
 
