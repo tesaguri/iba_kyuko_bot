@@ -200,27 +200,28 @@ fn unfollow<'a, I: Iterator<Item=&'a str>>(tokens: I, response: &mut String, sen
 }
 
 fn list(response: &mut String, sender: &User, sender_info: &UserInfo, recipient_screen_name: &str) -> Result<()> {
-    respondln!(
-        response, sender.lang,
-        "あなたは以下の情報をフォローしています。", "You are following the information shown below:"
-    );
+    if sender_info.following.is_empty() {
+        respondln!(response, sender.lang, "あなたがフォローしている情報はありません", "You are not following any information.");
+    } else {
+        respondln!(response, sender.lang, "あなたは以下の情報をフォローしています。", "You are following the information shown below:");
 
-    for (id, follow) in &sender_info.following {
-        match *follow {
-            Follow::Pattern { ref title, lecturer: None } => respondln!(
-                response, sender.lang,
-                "・{}（ID: {}）", "* \"{}\" (ID: {})", title, id
-            ),
-            Follow::Pattern { ref title, lecturer: Some(ref lecturer) } => respondln!(
-                response, sender.lang,
-                "・{}［{}］（ID: {}）", "* \"{}\" by {} (ID: {})", title, lecturer, id
-            ),
-            Follow::TweetId(tweet_id) => respondln!(
-                response, sender.lang,
-                "・https://twitter.com/{}/status/{}（ID: {}）",
-                "* https://twitter.com/{}/status/{} (ID: {})",
-                recipient_screen_name, tweet_id, id
-            ),
+        for (id, follow) in &sender_info.following {
+            match *follow {
+                Follow::Pattern { ref title, lecturer: None } => respondln!(
+                    response, sender.lang,
+                    "・{}（ID: {}）", "* \"{}\" (ID: {})", title, id
+                ),
+                Follow::Pattern { ref title, lecturer: Some(ref lecturer) } => respondln!(
+                    response, sender.lang,
+                    "・{}［{}］（ID: {}）", "* \"{}\" by {} (ID: {})", title, lecturer, id
+                ),
+                Follow::TweetId(tweet_id) => respondln!(
+                    response, sender.lang,
+                    "・https://twitter.com/{}/status/{}（ID: {}）",
+                    "* https://twitter.com/{}/status/{} (ID: {})",
+                    recipient_screen_name, tweet_id, id
+                ),
+            }
         }
     }
 
