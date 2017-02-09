@@ -5,15 +5,17 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use yaml;
 
 const RADIX64: &'static [u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
 
-pub struct Interval<F> {
+pub struct Schedule<F> {
     scheduler: F,
     next: Instant,
-    parked: bool,
+    parked: Arc<AtomicBool>,
 }
 
 pub struct SyncFile<T> {
@@ -28,12 +30,12 @@ pub struct WriteTrace<'a, T: 'a> {
     was_written: bool,
 }
 
-impl<F> Interval<F> {
+impl<F> Schedule<F> {
     pub fn new(scheduler: F) -> Self {
-        Interval {
+        Schedule {
             scheduler: scheduler,
             next: Instant::now(),
-            parked: false,
+            parked: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -43,14 +45,17 @@ impl<F> Interval<F> {
 
         let wait = self.next - now;
         let task = task::park();
+        let parked = self.parked.clone();
+
         thread::spawn(move || {
             thread::sleep(wait);
             task.unpark();
+            parked.store(false, Ordering::Release);
         });
     }
 }
 
-impl<F> Stream for Interval<F> where F: Fn() -> Option<Duration> {
+impl<F> Stream for Schedule<F> where F: Fn() -> Option<Duration> {
     type Item = ();
     type Error = Error;
 
@@ -59,9 +64,9 @@ impl<F> Stream for Interval<F> where F: Fn() -> Option<Duration> {
 
         let now = Instant::now();
         if now < self.next {
-            if !self.parked {
+            if !self.parked.load(Ordering::Acquire) {
+                self.parked.store(true, Ordering::Release);
                 self.park(now);
-                self.parked = true;
             }
             Ok(NotReady)
         } else {

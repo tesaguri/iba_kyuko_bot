@@ -5,7 +5,7 @@ use iba_kyuko_bot::Kyuko;
 use std::collections::HashMap;
 use std::fs::File;
 use twitter_stream::messages::{DirectMessage, StreamMessage};
-use util::{Interval, SyncFile, WriteTrace};
+use util::{Schedule, SyncFile, WriteTrace};
 
 pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, settings: Settings, archive: File) -> Result<()> {
     use egg_mode::service;
