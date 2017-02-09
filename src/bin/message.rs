@@ -29,6 +29,8 @@ pub fn message(text: String, sender: User, sender_info: &mut UserInfo, recipient
 {
     use std::fmt::Write;
 
+    info!("message: processing a message from {} (ID: {})", sender.screen_name, sender.id);
+
     let mut response = String::new();
 
     for stmt in text.split(';').map(str::trim).filter(|s| !s.is_empty()) {

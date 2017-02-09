@@ -1,4 +1,5 @@
 use config::*;
+use egg_mode::direct;
 use errors::*;
 use hyper::client::Client;
 use iba_kyuko_bot::Kyuko;
@@ -32,7 +33,7 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
         } else {
             None
         });
-    let interval = Interval::new(|| Some(Duration::from_secs(60))); // TODO: implement scheduler
+    let interval = Schedule::new(|| Some(Duration::from_secs(60))); // TODO: implement scheduler
 
     let client = Client::new();
 
@@ -52,7 +53,6 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
 fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: &Settings, archive: &File,
     client: &Client, url_len: (i32, i32)) -> Result<()>
 {
-    use egg_mode::direct;
     use egg_mode::tweet::DraftTweet;
 
     fn fetch(url: &str, client: &Client, user_agent: &str, keep_alive: bool) -> Result<String> {
@@ -155,17 +155,29 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
 fn direct_message(dm: DirectMessage, tweeted: &SyncFile<Tweeted>, users: &mut SyncFile<UserMap>, settings: &Settings)
     -> Result<()>
 {
-    let did_change = {
-        let sender_info = users.entry(dm.sender_id.to_string()).or_insert_with(UserInfo::default);
-        let mut sender_info = WriteTrace::new(sender_info);
+    if dm.recipient_id != dm.sender_id // Ignore DMs from the authenticated user (i.e. the bot) itself.
+    {
+        let (response, did_change) = {
+            let sender_info = users.entry(dm.sender_id.to_string()).or_insert_with(UserInfo::default);
+            let mut sender_info = WriteTrace::new(sender_info);
 
-        ::message::message(dm.text, dm.sender, &mut sender_info, dm.recipient.screen_name, tweeted, &settings.admins)?;
+            (
+                ::message::message(
+                    dm.text, dm.sender, &mut sender_info, dm.recipient.screen_name, tweeted, &settings.admins
+                )?,
+                sender_info.was_written()
+            )
+        };
 
-        sender_info.was_written()
-    };
+        if did_change {
+            users.commit()?;
+        }
 
-    if did_change {
-        users.commit()?;
+        if !response.is_empty() {
+            if let Err(e) = direct::send(dm.sender_id, &response, &settings.token()) {
+                warn!("failed to send a direct message {:?}\ncaused by: {:?}", response, e);
+            }
+        }
     }
 
     Ok(())
