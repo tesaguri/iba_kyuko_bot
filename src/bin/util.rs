@@ -23,11 +23,6 @@ pub struct SyncFile<T> {
     backup_path: PathBuf,
 }
 
-pub struct WriteTrace<'a, T: 'a> {
-    reference: &'a mut T,
-    was_written: bool,
-}
-
 impl<F> Schedule<F> {
     pub fn new(scheduler: F) -> Self {
         Schedule {
@@ -163,29 +158,6 @@ impl<T> Deref for SyncFile<T> {
 
 impl<T> DerefMut for SyncFile<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.data }
-}
-
-impl<'a, T> WriteTrace<'a, T> {
-    pub fn new(reference: &'a mut T) -> Self {
-        WriteTrace {
-            reference: reference,
-            was_written: false,
-        }
-    }
-
-    pub fn was_written(&self) -> bool { self.was_written }
-}
-
-impl<'a, T: 'a> Deref for WriteTrace<'a, T> {
-    type Target = T;
-    fn deref(&self) -> &T { self.reference }
-}
-
-impl<'a, T: 'a> DerefMut for WriteTrace<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        self.was_written = true;
-        self.reference
-    }
 }
 
 /// Returns an integer representation of the rightmost contiguous digits in `s`.

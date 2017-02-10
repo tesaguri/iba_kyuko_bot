@@ -21,6 +21,7 @@ extern crate serde_json as json;
 extern crate serde_yaml as yaml;
 extern crate twitter_stream;
 
+mod admin;
 mod config;
 mod daemon_main;
 mod message;
@@ -30,10 +31,7 @@ mod errors {
     error_chain! {}
 }
 
-use config::{Tweeted, UserMap};
 use errors::*;
-use egg_mode::{Token, tweet};
-use util::SyncFile;
 
 fn main() {
     use std::io::{self, Write};
@@ -77,78 +75,15 @@ fn run() -> Result<()> {
         .get_matches();
 
     let working_dir = matches.value_of("WORKING_DIR").unwrap();
-    let (tweeted, mut users, settings, archive) = config::load(working_dir)?;
+    let (mut tweeted, mut users, settings, archive) = config::load(working_dir)?;
 
     if matches.is_present("clear-users") {
-        clear_users(&mut users)
+        admin::clear_users(&mut users)
     } else if matches.is_present("clear") {
-        clear(tweeted, &settings.token())
+        admin::clear(&mut tweeted, &settings.token())
     } else if let Some(ids) = matches.values_of("remove") {
-        remove(ids, tweeted, &settings.token())
+        admin::remove(ids, &mut tweeted, &settings.token())
     } else {
         daemon_main::run(tweeted, users, settings, archive)
     }
-}
-
-fn remove<'a, I: 'a + Iterator<Item=&'a str>>(ids: I, mut tweeted: SyncFile<Tweeted>, token: &Token) -> Result<()> {
-    for id in ids {
-        info!("removing Tweet ID {}", id);
-
-        for tweets in tweeted.values_mut() {
-            tweets.remove(id);
-        }
-
-        let id = match id.parse() {
-            Ok(id) => id,
-            Err(_) => clap::Error::with_description(
-                &format!("invalid status id: {}", id),
-                clap::ErrorKind::InvalidValue
-            ).exit(),
-        };
-
-        tweet::delete(id, token).chain_err(|| format!("failed to remove a Tweet (ID: {})", id))?;
-        tweeted.commit()?;
-    }
-
-    Ok(())
-}
-
-fn clear(mut tweeted: SyncFile<Tweeted>, token: &Token) -> Result<()> {
-    // TODO: explore better way to handle ownerships.
-    loop {
-        if let Some((dept, id)) = tweeted.iter()
-            .filter_map(|(dept, tweets)| {
-                tweets.keys().map(|id| (dept.clone(), id.clone())).next()
-            }).next()
-        {
-            info!("removing Tweet ID {}", id);
-
-            let is_empty = {
-                let tweets = tweeted.get_mut(dept.as_str()).unwrap();
-                tweets.remove(id.as_str());
-                tweets.is_empty()
-            };
-
-            if is_empty {
-                tweeted.remove(dept.as_str());
-            }
-
-            let id = id.parse().chain_err(|| format!("invalid status id {:?} in {:?}", id, tweeted.file_name()))?;
-            tweet::delete(id, token).chain_err(|| format!("failed to remove a Tweet (ID: {})", id))?;
-
-            tweeted.commit()?;
-        } else {
-            return Ok(());
-        }
-    }
-}
-
-fn clear_users(users: &mut SyncFile<UserMap>) -> Result<()> {
-    println!("clearing all the following information");
-
-    for user in users.values_mut() {
-        user.clear();
-    }
-
-    users.commit()
 }

@@ -1,7 +1,7 @@
-use config::{Follow, FollowError, Tweeted, UserInfo};
+use config::{Follow, FollowError, Settings, Tweeted, UserInfo, UserMap};
 use errors::*;
 use std::fmt::Write;
-use twitter_stream::messages::{User, UserId};
+use twitter_stream::messages::User;
 use util::{self, SyncFile};
 
 const WRITE_FAILED: &'static str = "failed to write a message to a String";
@@ -24,41 +24,51 @@ macro_rules! respondln {
     ($dst:expr, $lang:expr, $fmt_ja:expr, $fmt_en:expr) => (respondln!($dst, $lang, $fmt_ja, $fmt_en,));
 }
 
-pub fn message(text: String, sender: User, sender_info: &mut UserInfo, recipient_screen_name: String,
-    tweeted: &SyncFile<Tweeted>, admins: &[UserId]) -> Result<String>
+pub fn message(text: String, sender: User, users: &mut SyncFile<UserMap>, recipient_screen_name: String,
+    tweeted: &mut SyncFile<Tweeted>, settings: &Settings) -> Result<String>
 {
+    use admin;
     use std::fmt::Write;
 
     info!("message: processing a message from {} (ID: {})", sender.screen_name, sender.id);
 
     let mut response = String::new();
+    let lang = &sender.lang;
+
+    macro_rules! sender_info {
+        () => (users.entry(sender.id.to_string()).or_insert_with(UserInfo::default));
+    }
 
     for stmt in text.split(';').map(str::trim).filter(|s| !s.is_empty()) {
         let mut tokens = stmt.split(' ').filter(|s| !s.is_empty());
 
+        macro_rules! unknown {
+            ($cmd:expr) => (respondln!(response, lang, "未知のコマンド: `{}`", "Unknown command: `{}`", $cmd));
+        }
+
         match tokens.next() {
-            Some("follow") => {
-                follow(tokens, &mut response, sender_info, &sender.lang, &recipient_screen_name, tweeted)?;
-            },
-            Some("unfollow") => unfollow(tokens, &mut response, sender_info, &sender.lang, &recipient_screen_name)?,
+            Some("follow") => follow(tokens, &mut response, sender_info!(), lang, &recipient_screen_name, tweeted)?,
+            Some("unfollow") => unfollow(tokens, &mut response, sender_info!(), lang, &recipient_screen_name)?,
             Some("clear") => {
-                sender_info.clear();
+                sender_info!().clear();
                 respondln!(
-                    response, sender.lang,
+                    response, lang,
                     "全ての講座の情報のフォローを解除しました。", "You have unfollowed all the lecture information."
                 );
-            }
-            Some("list") => list(&mut response, &sender, sender_info, &recipient_screen_name)?,
-            Some("status") => if admins.contains(&sender.id) {
-                writeln!(response, "status: OK").chain_err(|| WRITE_FAILED)?;
             },
-            Some("shutdown") => if admins.contains(&sender.id) {
-                // TODO: set a flag for the scheduler to halt
-            },
+            Some("list") => list(&mut response, sender_info!(), lang, &recipient_screen_name)?,
             Some("rem") => (), // noop
-            Some(cmd) => {
-                info!("unknown command: {}", cmd);
+            Some("admin") if settings.admins.contains(&sender.id) => match tokens.next() {
+                Some("clear") => admin::clear(tweeted, &settings.token())?,
+                Some("clear-users") => admin::clear_users(users)?,
+                Some("remove") => admin::remove(tokens, tweeted, &settings.token())?,
+                Some("shutdown") => {
+                    // TODO: set a flag for the scheduler to halt
+                },
+                Some(cmd) => unknown!(cmd),
+                None => (),
             },
+            Some(cmd) => unknown!(cmd),
             None => (),
         }
     }
@@ -206,28 +216,28 @@ fn unfollow<'a, I: Iterator<Item=&'a str>>(tokens: I, response: &mut String, sen
     Ok(())
 }
 
-fn list(response: &mut String, sender: &User, sender_info: &UserInfo, recipient_screen_name: &str) -> Result<()> {
-    if sender_info.following.is_empty() {
-        respondln!(response, sender.lang,
+fn list(response: &mut String, sender: &UserInfo, lang: &str, recipient_screen_name: &str) -> Result<()> {
+    if sender.following.is_empty() {
+        respondln!(response, lang,
             "あなたがフォローしている情報はありません", "You are not following any information."
         );
     } else {
-        respondln!(response, sender.lang,
+        respondln!(response, lang,
             "あなたは以下の情報をフォローしています。", "You are following the information shown below:"
         );
 
-        for (id, follow) in &sender_info.following {
+        for (id, follow) in &sender.following {
             match *follow {
                 Follow::Pattern { ref title, lecturer: None } => respondln!(
-                    response, sender.lang,
+                    response, lang,
                     "・{}（ID: {}）", "* \"{}\" (ID: {})", title, id
                 ),
                 Follow::Pattern { ref title, lecturer: Some(ref lecturer) } => respondln!(
-                    response, sender.lang,
+                    response, lang,
                     "・{}［{}］（ID: {}）", "* \"{}\" by {} (ID: {})", title, lecturer, id
                 ),
                 Follow::TweetId(tweet_id) => respondln!(
-                    response, sender.lang,
+                    response, lang,
                     "・https://twitter.com/{}/status/{}（ID: {}）",
                     "* https://twitter.com/{}/status/{} (ID: {})",
                     recipient_screen_name, tweet_id, id

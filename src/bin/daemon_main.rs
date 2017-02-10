@@ -6,7 +6,7 @@ use iba_kyuko_bot::Kyuko;
 use std::collections::HashMap;
 use std::fs::File;
 use twitter_stream::messages::{DirectMessage, StreamMessage};
-use util::{Schedule, SyncFile, WriteTrace};
+use util::{Schedule, SyncFile};
 
 pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, settings: Settings, archive: File) -> Result<()> {
     use egg_mode::service;
@@ -40,10 +40,10 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     dms.merge(interval).for_each(|merged| {
         use futures::stream::MergedItem::*;
         match merged {
-            First(dm) => direct_message(dm, &tweeted, &mut users, &settings),
+            First(dm) => direct_message(dm, &mut tweeted, &mut users, &settings),
             Second(()) => update(&mut tweeted, &users, &settings, &archive, &client, url_len),
             Both(dm, ()) => {
-                direct_message(dm, &tweeted, &mut users, &settings)?;
+                direct_message(dm, &mut tweeted, &mut users, &settings)?;
                 update(&mut tweeted, &users, &settings, &archive, &client, url_len)
             },
         }
@@ -152,26 +152,12 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
     Ok(())
 }
 
-fn direct_message(dm: DirectMessage, tweeted: &SyncFile<Tweeted>, users: &mut SyncFile<UserMap>, settings: &Settings)
-    -> Result<()>
+fn direct_message(dm: DirectMessage, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<UserMap>,
+    settings: &Settings) -> Result<()>
 {
     if dm.recipient_id != dm.sender_id // Ignore DMs from the authenticated user (i.e. the bot) itself.
     {
-        let (response, did_change) = {
-            let sender_info = users.entry(dm.sender_id.to_string()).or_insert_with(UserInfo::default);
-            let mut sender_info = WriteTrace::new(sender_info);
-
-            (
-                ::message::message(
-                    dm.text, dm.sender, &mut sender_info, dm.recipient.screen_name, tweeted, &settings.admins
-                )?,
-                sender_info.was_written()
-            )
-        };
-
-        if did_change {
-            users.commit()?;
-        }
+        let response = ::message::message(dm.text, dm.sender, users, dm.recipient.screen_name, tweeted, settings)?;
 
         if !response.is_empty() {
             if let Err(e) = direct::send(dm.sender_id, &response, &settings.token()) {
