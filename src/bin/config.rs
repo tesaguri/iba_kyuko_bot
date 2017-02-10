@@ -115,6 +115,12 @@ impl Settings {
 }
 
 impl UserInfo {
+    pub fn clear(&mut self) {
+        self.following.clear();
+        self.following.shrink_to_fit();
+        self.next_id = 0;
+    }
+
     pub fn follow<'a>(&mut self, target: Follow, tweeted: &'a SyncFile<Tweeted>)
     -> ::std::result::Result<(String, Either<(String, Option<String>), (u64, &'a Kyuko)>), FollowError>
     {

@@ -41,6 +41,13 @@ pub fn message(text: String, sender: User, sender_info: &mut UserInfo, recipient
                 follow(tokens, &mut response, sender_info, &sender.lang, &recipient_screen_name, tweeted)?;
             },
             Some("unfollow") => unfollow(tokens, &mut response, sender_info, &sender.lang, &recipient_screen_name)?,
+            Some("clear") => {
+                sender_info.clear();
+                respondln!(
+                    response, sender.lang,
+                    "全ての講座の情報のフォローを解除しました。", "You have unfollowed all the lecture information."
+                );
+            }
             Some("list") => list(&mut response, &sender, sender_info, &recipient_screen_name)?,
             Some("status") => if admins.contains(&sender.id) {
                 writeln!(response, "status: OK").chain_err(|| WRITE_FAILED)?;
@@ -201,9 +208,13 @@ fn unfollow<'a, I: Iterator<Item=&'a str>>(tokens: I, response: &mut String, sen
 
 fn list(response: &mut String, sender: &User, sender_info: &UserInfo, recipient_screen_name: &str) -> Result<()> {
     if sender_info.following.is_empty() {
-        respondln!(response, sender.lang, "あなたがフォローしている情報はありません", "You are not following any information.");
+        respondln!(response, sender.lang,
+            "あなたがフォローしている情報はありません", "You are not following any information."
+        );
     } else {
-        respondln!(response, sender.lang, "あなたは以下の情報をフォローしています。", "You are following the information shown below:");
+        respondln!(response, sender.lang,
+            "あなたは以下の情報をフォローしています。", "You are following the information shown below:"
+        );
 
         for (id, follow) in &sender_info.following {
             match *follow {

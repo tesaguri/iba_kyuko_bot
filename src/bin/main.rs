@@ -26,15 +26,14 @@ mod daemon_main;
 mod message;
 mod util;
 
-use config::Tweeted;
-use egg_mode::{Token, tweet};
-use util::SyncFile;
-
 mod errors {
     error_chain! {}
 }
 
+use config::{Tweeted, UserMap};
 use errors::*;
+use egg_mode::{Token, tweet};
+use util::SyncFile;
 
 fn main() {
     use std::io::{self, Write};
@@ -69,16 +68,21 @@ fn run() -> Result<()> {
             .multiple(true)
             .help("Removes the specified Tweet")
             .takes_value(true))
-        .arg(Arg::with_name("remove-all")
-            .long("remove-all")
-            .help("Removes all Tweets"))
+        .arg(Arg::with_name("clear")
+            .long("clear")
+            .help("Removes all the Tweets"))
+        .arg(Arg::with_name("clear-users")
+            .long("clear-users")
+            .help("Clears every following information of all the users"))
         .get_matches();
 
     let working_dir = matches.value_of("WORKING_DIR").unwrap();
-    let (tweeted, users, settings, archive) = config::load(working_dir)?;
+    let (tweeted, mut users, settings, archive) = config::load(working_dir)?;
 
-    if matches.is_present("remove-all") {
-        remove_all(tweeted, &settings.token())
+    if matches.is_present("clear-users") {
+        clear_users(&mut users)
+    } else if matches.is_present("clear") {
+        clear(tweeted, &settings.token())
     } else if let Some(ids) = matches.values_of("remove") {
         remove(ids, tweeted, &settings.token())
     } else {
@@ -109,7 +113,7 @@ fn remove<'a, I: 'a + Iterator<Item=&'a str>>(ids: I, mut tweeted: SyncFile<Twee
     Ok(())
 }
 
-fn remove_all(mut tweeted: SyncFile<Tweeted>, token: &Token) -> Result<()> {
+fn clear(mut tweeted: SyncFile<Tweeted>, token: &Token) -> Result<()> {
     // TODO: explore better way to handle ownerships.
     loop {
         if let Some((dept, id)) = tweeted.iter()
@@ -137,4 +141,14 @@ fn remove_all(mut tweeted: SyncFile<Tweeted>, token: &Token) -> Result<()> {
             return Ok(());
         }
     }
+}
+
+fn clear_users(users: &mut SyncFile<UserMap>) -> Result<()> {
+    println!("clearing all the following information");
+
+    for user in users.values_mut() {
+        user.clear();
+    }
+
+    users.commit()
 }
