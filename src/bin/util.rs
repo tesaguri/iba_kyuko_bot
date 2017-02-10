@@ -45,6 +45,8 @@ impl<F> Schedule<F> {
         let task = task::park();
         let parked = self.parked.clone();
 
+        self.parked.store(true, Ordering::Relaxed);
+
         thread::spawn(move || {
             thread::sleep(wait);
             task.unpark();
@@ -63,7 +65,6 @@ impl<F> Stream for Schedule<F> where F: Fn() -> Option<Duration> {
         let now = Instant::now();
         if now < self.next {
             if !self.parked.load(Ordering::Acquire) {
-                self.parked.store(true, Ordering::Release);
                 self.park(now);
             }
             Ok(NotReady)
