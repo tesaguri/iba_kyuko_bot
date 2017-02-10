@@ -6,22 +6,14 @@ use util::{self, SyncFile};
 
 const WRITE_FAILED: &'static str = "failed to write a message to a String";
 
-macro_rules! respond {
-    ($dst:expr, $lang:expr, $fmt_ja:expr, $fmt_en:expr, $($args:tt)*) => {
+macro_rules! respondln {
+    ($dst:expr, $lang:expr, $fmt_ja:expr, $fmt_en:expr $(, $arg:expr)*) => {
         if $lang.starts_with("en") {
-            write!($dst, $fmt_en, $($args)*)
+            write!($dst, concat!($fmt_en, '\n'), $($arg),*)
         } else {
-            write!($dst, $fmt_ja, $($args)*)
+            write!($dst, concat!($fmt_ja, '\n'), $($arg),*)
         }.chain_err(|| WRITE_FAILED)?;
     };
-    ($dst:expr, $lang:expr, $fmt_ja:expr, $fmt_en:expr) => (respond!($dst, $lang, $fmt_ja, $fmt_en,));
-}
-
-macro_rules! respondln {
-    ($dst:expr, $lang:expr, $fmt_ja:expr, $fmt_en:expr, $($args:tt)*) => {
-        respond!($dst, $lang, concat!($fmt_ja, '\n'), concat!($fmt_en, '\n'), $($args)*)
-    };
-    ($dst:expr, $lang:expr, $fmt_ja:expr, $fmt_en:expr) => (respondln!($dst, $lang, $fmt_ja, $fmt_en,));
 }
 
 pub fn message(text: String, sender: User, users: &mut SyncFile<UserMap>, recipient_screen_name: String,
@@ -88,14 +80,14 @@ fn follow<'a, I: Iterator<Item=&'a str>>(mut tokens: I, response: &mut String,
         use self::FollowError::*;
 
         match sender.follow(f, tweeted) {
-            Ok((id, Left((title, Some(lecturer))))) => respond!(
+            Ok((id, Left((title, Some(lecturer))))) => respondln!(
                 response, lang,
                 "題目が「{}」を含み担当教員「{}」を含む講座の情報を通知します（ID: {}）。",
                 "You will be notified of information about lectures containing \"{}\"
                     in their title and \"{}\" in their lecturer's name (ID: \"{}\").",
                 title, lecturer, id
             ),
-            Ok((id, Left((title, None)))) => respond!(
+            Ok((id, Left((title, None)))) => respondln!(
                 response, lang,
                 "題目が「{}」を含む講座の情報を通知します（ID: {}）。",
                 "You will be notified of information about lectures containing \"{}\"
@@ -117,7 +109,7 @@ fn follow<'a, I: Iterator<Item=&'a str>>(mut tokens: I, response: &mut String,
                     k.title, k.lecturer, k.kind, recipient_screen_name, tweet_id, datefmt
                 );
             },
-            Err(AlreadyFollowing(id)) => respond!(
+            Err(AlreadyFollowing(id)) => respondln!(
                 response, lang,
                 "既にフォローしている情報です（ID: {}）",
                 "You are already following the information (ID: \"{}\")",
