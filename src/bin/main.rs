@@ -75,7 +75,10 @@ fn run() -> Result<()> {
         .get_matches();
 
     let working_dir = matches.value_of("WORKING_DIR").unwrap();
+
+    info!("loading the working directory {:?}", working_dir);
     let (mut tweeted, mut users, settings, archive) = config::load(working_dir)?;
+    info!("settings: {:?}", settings);
 
     if matches.is_present("clear-users") {
         admin::clear_users(&mut users)

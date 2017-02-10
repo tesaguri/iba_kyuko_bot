@@ -37,7 +37,7 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
 
     let client = Client::new();
 
-    dms.merge(interval).for_each(|merged| {
+    let future = dms.merge(interval).for_each(|merged| {
         use futures::stream::MergedItem::*;
         match merged {
             First(dm) => direct_message(dm, &mut tweeted, &mut users, &settings),
@@ -47,7 +47,11 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
                 update(&mut tweeted, &users, &settings, &archive, &client, url_len)
             },
         }
-    }).wait()
+    });
+
+    info!("started");
+
+    future.wait()
 }
 
 fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: &Settings, archive: &File,
@@ -105,9 +109,12 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
         Ok(())
     }
 
+    info!("started crawling");
+
     // Eagarly evaluate HTTP connections to prevent disconnection from the server.
     let mut buf = Vec::new();
     for (i, url) in settings.urls.iter().enumerate() {
+        info!("fetching {}", url);
         let html = fetch(url, client, &settings.user_agent, i+1 < settings.urls.len())
             .chain_err(|| format!("failed to fetch {}", url))?;
         buf.push(html);

@@ -30,7 +30,7 @@ pub fn message(text: String, sender: User, users: &mut SyncFile<UserMap>, recipi
     use admin;
     use std::fmt::Write;
 
-    info!("message: processing a message from {} (ID: {})", sender.screen_name, sender.id);
+    info!("message: processing a message from @{} (ID: {})", sender.screen_name, sender.id);
 
     let mut response = String::new();
     let lang = &sender.lang;

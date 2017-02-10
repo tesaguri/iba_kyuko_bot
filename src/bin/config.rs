@@ -3,6 +3,7 @@ use either::{Either, Left, Right};
 use errors::*;
 use iba_kyuko_bot::Kyuko;
 use std::collections::HashMap;
+use std::fmt::{self, Formatter};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use twitter_stream::messages::UserId;
@@ -111,6 +112,16 @@ impl Settings {
             consumer: KeyPair::new(self.consumer_key.as_str(), self.consumer_secret.as_str()),
             access: KeyPair::new(self.access_key.as_str(), self.access_secret.as_str()),
         }
+    }
+}
+
+impl fmt::Debug for Settings {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("Settings")
+            .field("admins", &self.admins)
+            .field("user_agent", &self.user_agent)
+            .field("urls", &self.user_agent)
+            .finish()
     }
 }
 
