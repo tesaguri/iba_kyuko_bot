@@ -28,12 +28,14 @@ pub enum FollowError {
 
 #[derive(Deserialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub schedule: Vec<String>,
+    #[serde(default)]
+    pub admins: Vec<UserId>,
     pub consumer_key: String,
     pub consumer_secret: String,
     pub access_key: String,
     pub access_secret: String,
-    #[serde(default)]
-    pub admins: Vec<UserId>,
     #[serde(default = "default_user_agent")]
     pub user_agent: String,
     pub urls: Vec<String>,

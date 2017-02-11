@@ -1,4 +1,5 @@
 use config::*;
+use cron::parser::Parser as CronParser;
 use egg_mode::direct;
 use errors::*;
 use hyper::client::Client;
@@ -12,7 +13,6 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     use egg_mode::service;
     use futures::{Future, Stream};
     use json;
-    use std::time::Duration;
     use twitter_stream::TwitterJsonStream;
 
     let url_len = {
@@ -21,6 +21,14 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
             .response;
         (conf.short_url_length, conf.short_url_length_https)
     };
+
+    let mut schedule = Vec::with_capacity(settings.schedule.len());
+    for s in &settings.schedule {
+        let sched = CronParser.parse(s)
+            .chain_err(|| format!("failed to parse a cron expression {:?}", s))?;
+        schedule.push(sched);
+    }
+    let schedule = Schedule::new(&schedule);
 
     let dms = TwitterJsonStream::user(
         &settings.consumer_key, &settings.consumer_secret,
@@ -33,16 +41,15 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
         } else {
             None
         });
-    let interval = Schedule::new(|| Some(Duration::from_secs(60))); // TODO: implement scheduler
 
     let client = Client::new();
 
-    let future = dms.merge(interval).for_each(|merged| {
+    let future = schedule.merge(dms).for_each(|merged| {
         use futures::stream::MergedItem::*;
         match merged {
-            First(dm) => direct_message(dm, &mut tweeted, &mut users, &settings),
-            Second(()) => update(&mut tweeted, &users, &settings, &archive, &client, url_len),
-            Both(dm, ()) => {
+            First(()) => update(&mut tweeted, &users, &settings, &archive, &client, url_len),
+            Second(dm) => direct_message(dm, &mut tweeted, &mut users, &settings),
+            Both((), dm) => {
                 direct_message(dm, &mut tweeted, &mut users, &settings)?;
                 update(&mut tweeted, &users, &settings, &archive, &client, url_len)
             },

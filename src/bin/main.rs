@@ -3,6 +3,7 @@
 extern crate chrono;
 #[macro_use]
 extern crate clap;
+extern crate cron;
 extern crate egg_mode;
 extern crate either;
 extern crate env_logger;

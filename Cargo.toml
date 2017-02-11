@@ -9,6 +9,7 @@ A utility to fetch lecture information (cancellation, supplement, etc.) from Iba
 [dependencies]
 chrono = { version = "0.3", features = ["serde"] }
 clap = "*"
+cron = "*"
 egg-mode = "0.8"
 either = "1.0"
 env_logger = "*"

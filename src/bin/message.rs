@@ -21,6 +21,7 @@ pub fn message(text: String, sender: User, users: &mut SyncFile<UserMap>, recipi
 {
     use admin;
     use std::fmt::Write;
+    use std::process;
 
     info!("message: processing a message from @{} (ID: {})", sender.screen_name, sender.id);
 
@@ -54,9 +55,7 @@ pub fn message(text: String, sender: User, users: &mut SyncFile<UserMap>, recipi
                 Some("clear") => admin::clear(tweeted, &settings.token())?,
                 Some("clear-users") => admin::clear_users(users)?,
                 Some("remove") => admin::remove(tokens, tweeted, &settings.token())?,
-                Some("shutdown") => {
-                    // TODO: set a flag for the scheduler to halt
-                },
+                Some("shutdown") => process::exit(0), // TODO: graceful shutdown
                 Some(cmd) => unknown!(cmd),
                 None => (),
             },

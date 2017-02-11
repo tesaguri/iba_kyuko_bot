@@ -1,19 +1,22 @@
+use chrono::{DateTime, UTC};
+use cron::schedule::{CronSchedule, CronScheduleIterator};
 use errors::*;
 use futures::{Poll, Stream};
 use serde::{Serialize, Deserialize};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
+use std::iter::Peekable;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use yaml;
 
-pub struct Schedule<F> {
-    scheduler: F,
-    next: Instant,
-    parked: Arc<AtomicBool>,
+pub struct Schedule<'a> {
+    upcoming: MergedIterator<CronScheduleIterator<'a>>,
+    next: Option<DateTime<UTC>>,
+    waiting: Arc<AtomicBool>,
 }
 
 pub struct SyncFile<T> {
@@ -23,54 +26,70 @@ pub struct SyncFile<T> {
     backup_path: PathBuf,
 }
 
-impl<F> Schedule<F> {
-    pub fn new(scheduler: F) -> Self {
+struct MergedIterator<I> where I: Iterator {
+    iters: Vec<Peekable<I>>,
+}
+
+impl<'a> Schedule<'a> {
+    pub fn new(crons: &'a [CronSchedule]) -> Self {
         Schedule {
-            scheduler: scheduler,
-            next: Instant::now(),
-            parked: Arc::new(AtomicBool::new(false)),
+            upcoming: MergedIterator::new(crons.iter().map(CronSchedule::upcoming)),
+            next: None,
+            waiting: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    fn park(&mut self, now: Instant) {
+    fn next(&mut self, now: DateTime<UTC>) -> Option<DateTime<UTC>> {
+        self.upcoming.by_ref().filter(|tm| tm > &now).next()
+    }
+
+    fn set_timer(&mut self, dur: Duration) {
         use futures::task;
         use std::thread;
 
-        let wait = self.next - now;
         let task = task::park();
-        let parked = self.parked.clone();
-
-        self.parked.store(true, Ordering::Relaxed);
+        let waiting = self.waiting.clone();
+        waiting.store(true, Ordering::Relaxed);
 
         thread::spawn(move || {
-            thread::sleep(wait);
+            thread::sleep(dur);
             task.unpark();
-            parked.store(false, Ordering::Release);
+            waiting.store(false, Ordering::Release);
         });
     }
 }
 
-impl<F> Stream for Schedule<F> where F: Fn() -> Option<Duration> {
+impl<'a> Stream for Schedule<'a> {
     type Item = ();
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<()>, Error> {
         use futures::Async::*;
 
-        let now = Instant::now();
-        if now < self.next {
-            if !self.parked.load(Ordering::Acquire) {
-                self.park(now);
+        let now = UTC::now();
+
+        let next = if let Some(next) = self.next {
+            next
+        } else if let Some(next) = self.next(now) {
+            self.next = Some(next);
+            next
+        } else {
+            return Ok(Ready(None));
+        };
+
+        if let Ok(dur) = next.signed_duration_since(now).to_std() {
+            if !self.waiting.load(Ordering::Acquire) {
+                self.set_timer(dur);
             }
             Ok(NotReady)
         } else {
-            if let Some(dur) = (self.scheduler)() {
-                self.next = now + dur;
-                self.park(now);
-                Ok(Ready(Some(())))
+            if let Some(next) = self.next(now) {
+                self.next = Some(next);
+                self.set_timer(next.signed_duration_since(now).to_std().unwrap());
             } else {
-                Ok(Ready(None))
+                self.next = None;
             }
+            Ok(Ready(Some(())))
         }
     }
 }
@@ -160,6 +179,37 @@ impl<T> DerefMut for SyncFile<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.data }
 }
 
+impl<I> MergedIterator<I> where I: Iterator {
+    fn new<J: IntoIterator<Item=I>>(iters: J) -> Self {
+        MergedIterator {
+            iters: iters.into_iter().map(|i| i.peekable()).collect(),
+        }
+    }
+}
+
+impl<I> Iterator for MergedIterator<I> where I: Iterator, I::Item: Ord + Copy {
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<I::Item> {
+        // TODO: explore more efficient way.
+        let mut cloned: Vec<_> = self.iters.iter_mut()
+            .map(|i| i.peek().cloned())
+            .collect();
+
+        // Remove iterators that don't have next item.
+        {
+            let mut has_next = cloned.iter().map(Option::is_some);
+            self.iters.retain(|_| has_next.next().unwrap());
+        }
+        cloned.retain(Option::is_some);
+
+        self.iters.iter_mut()
+            .rev()
+            .min_by_key(|_| cloned.pop())
+            .and_then(Iterator::next)
+    }
+}
+
 /// Returns an integer representation of the rightmost contiguous digits in `s`.
 pub fn ratoi(s: &str) -> Option<u64> {
     fn atoi(c: u8) -> Option<u8> {
@@ -224,6 +274,20 @@ fn temp_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_iter() {
+        let mut a0 = vec![1,4,7,10];
+        let mut a1 = vec![3,4,5,6];
+        let mut a2 = vec![2,5,8,11];
+        let mut arrays = vec![
+            a0.drain(..),
+            a1.drain(..),
+            a2.drain(..),
+        ];
+        let merged: Vec<_> = MergedIterator::new(arrays.drain(..)).collect();
+        assert_eq!([1, 2, 3, 4, 4, 5, 5, 6, 7, 8, 10, 11].as_ref(), merged.as_slice());
+    }
 
     #[test]
     fn rdigits_test() {
