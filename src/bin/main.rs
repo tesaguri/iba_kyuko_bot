@@ -70,7 +70,7 @@ fn run() -> Result<()> {
             .takes_value(true))
         .arg(Arg::with_name("clear")
             .long("clear")
-            .help("Removes all the Tweets"))
+            .help("Removes all the posted Tweets"))
         .arg(Arg::with_name("clear-users")
             .long("clear-users")
             .help("Clears every following information of all the users"))

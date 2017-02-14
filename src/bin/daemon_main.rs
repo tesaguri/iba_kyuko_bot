@@ -13,7 +13,8 @@ use util::SyncFile;
 pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, settings: Settings, archive: File)
     -> Result<()>
 {
-    use egg_mode::service;
+    use egg_mode::{self, service, Response};
+    use egg_mode::user::TwitterUser;
     use futures::{Future, Stream};
     use json;
     use twitter_stream::TwitterJsonStream;
@@ -28,6 +29,9 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     let tz = Local;
     let schedule = Schedule::new(&settings.schedule, &tz);
 
+    let Response { response: TwitterUser { id, .. }, .. } = egg_mode::verify_tokens(&settings.token())
+        .chain_err(|| "failed to retrieve the information of the authenticating user")?;
+
     let dms = TwitterJsonStream::user(
         &settings.consumer_key, &settings.consumer_secret,
         &settings.access_key, &settings.access_secret
@@ -35,7 +39,11 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
         .chain_err(|| "failed to connect to User Stream")?
         .then(|r| r.chain_err(|| "an error occured while listening on User Stream"))
         .filter_map(|json| if let Ok(StreamMessage::DirectMessage(dm)) = json::from_str(&json) {
-            Some(dm)
+            if dm.sender_id == id {
+                None
+            } else {
+                Some(dm)
+            }
         } else {
             None
         });
@@ -167,14 +175,11 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
 fn direct_message(dm: DirectMessage, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<UserMap>,
     settings: &Settings) -> Result<()>
 {
-    if dm.recipient_id != dm.sender_id // Ignore DMs from the authenticated user (i.e. the bot) itself.
-    {
-        let response = ::message::message(dm.text, dm.sender, users, dm.recipient.screen_name, tweeted, settings)?;
+    let response = ::message::message(dm.text, dm.sender, users, dm.recipient.screen_name, tweeted, settings)?;
 
-        if !response.is_empty() {
-            if let Err(e) = direct::send(dm.sender_id, &response, &settings.token()) {
-                warn!("failed to send a direct message {:?}\ncaused by: {:?}", response, e);
-            }
+    if !response.is_empty() {
+        if let Err(e) = direct::send(dm.sender_id, &response, &settings.token()) {
+            warn!("failed to send a direct message {:?}\ncaused by: {:?}", response, e);
         }
     }
 
