@@ -2,6 +2,7 @@ use egg_mode::{KeyPair, Token};
 use either::{Either, Left, Right};
 use errors::*;
 use iba_kyuko_bot::Kyuko;
+use schedule::UnitSchedule;
 use std::collections::HashMap;
 use std::fmt::{self, Formatter};
 use std::fs::{File, OpenOptions};
@@ -29,7 +30,7 @@ pub enum FollowError {
 #[derive(Deserialize)]
 pub struct Settings {
     #[serde(default)]
-    pub schedule: Vec<String>,
+    pub schedule: Vec<UnitSchedule>,
     #[serde(default)]
     pub admins: Vec<UserId>,
     pub consumer_key: String,

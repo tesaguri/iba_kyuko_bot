@@ -1,22 +1,25 @@
-use chrono::{DateTime, UTC};
-use cron::schedule::{CronSchedule, CronScheduleIterator};
 use errors::*;
-use futures::{Poll, Stream};
 use serde::{Serialize, Deserialize};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::iter::Peekable;
+#[cfg(feature = "unstable")]
+use std::iter::FusedIterator;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use yaml;
 
-pub struct Schedule<'a> {
-    upcoming: MergedIterator<CronScheduleIterator<'a>>,
-    next: Option<DateTime<UTC>>,
-    waiting: Arc<AtomicBool>,
+pub struct CarryingUpIterator<I, J, K> where I: Iterator, J: Iterator {
+    i_orig: Peekable<I>,
+    j_orig: Peekable<J>,
+    k_orig: K,
+    i: Peekable<I>,
+    j: Peekable<J>,
+    k: K,
+}
+
+pub struct MergedIterator<I> where I: Iterator {
+    iters: Vec<Peekable<I>>,
 }
 
 pub struct SyncFile<T> {
@@ -26,71 +29,86 @@ pub struct SyncFile<T> {
     backup_path: PathBuf,
 }
 
-struct MergedIterator<I> where I: Iterator {
-    iters: Vec<Peekable<I>>,
-}
+impl<I, J, K> CarryingUpIterator<I, J, K>
+    where I: Iterator + Clone, J: Iterator + Clone, K: Iterator + Clone, I::Item: Clone, J::Item: Clone
+{
+    pub fn new(i: I, j: J, k: K) -> Option<Self> {
+        let (mut i, mut j) = (i.peekable(), j.peekable());
 
-impl<'a> Schedule<'a> {
-    pub fn new(crons: &'a [CronSchedule]) -> Self {
-        Schedule {
-            upcoming: MergedIterator::new(crons.iter().map(CronSchedule::upcoming)),
-            next: None,
-            waiting: Arc::new(AtomicBool::new(false)),
+        if let (Some(_), Some(_), Some(_)) = (i.peek(), j.peek(), k.clone().next()) {
+            Some(CarryingUpIterator {
+                i_orig: i.clone(),
+                j_orig: j.clone(),
+                k_orig: k.clone(),
+                i: i,
+                j: j,
+                k: k,
+            })
+        } else {
+            None
         }
     }
-
-    fn next(&mut self, now: DateTime<UTC>) -> Option<DateTime<UTC>> {
-        self.upcoming.by_ref().filter(|tm| tm > &now).next()
-    }
-
-    fn set_timer(&mut self, dur: Duration) {
-        use futures::task;
-        use std::thread;
-
-        let task = task::park();
-        let waiting = self.waiting.clone();
-        waiting.store(true, Ordering::Relaxed);
-
-        thread::spawn(move || {
-            thread::sleep(dur);
-            task.unpark();
-            waiting.store(false, Ordering::Release);
-        });
-    }
 }
 
-impl<'a> Stream for Schedule<'a> {
-    type Item = ();
-    type Error = Error;
+impl<I, J, K> Iterator for CarryingUpIterator<I, J, K>
+    where I: Iterator + Clone, J: Iterator + Clone, K: Iterator + Clone, I::Item: Clone, J::Item: Clone
+{
+    type Item = (I::Item, J::Item, K::Item);
 
-    fn poll(&mut self) -> Poll<Option<()>, Error> {
-        use futures::Async::*;
-
-        let now = UTC::now();
-
-        let next = if let Some(next) = self.next {
-            next
-        } else if let Some(next) = self.next(now) {
-            self.next = Some(next);
-            next
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(k) = self.k.next() {
+            Some((self.i.peek().unwrap().clone(), self.j.peek().unwrap().clone(), k))
         } else {
-            return Ok(Ready(None));
-        };
-
-        if let Ok(dur) = next.signed_duration_since(now).to_std() {
-            if !self.waiting.load(Ordering::Acquire) {
-                self.set_timer(dur);
-            }
-            Ok(NotReady)
-        } else {
-            if let Some(next) = self.next(now) {
-                self.next = Some(next);
-                self.set_timer(next.signed_duration_since(now).to_std().unwrap());
+            self.k = self.k_orig.clone();
+            self.j.next();
+            if let Some(j) = self.j.peek().cloned() {
+                Some((self.i.peek().unwrap().clone(), j, self.k.next().unwrap()))
             } else {
-                self.next = None;
+                self.j = self.j_orig.clone();
+                self.i.next();
+                if let Some(i) = self.i.peek().cloned() {
+                    Some((i, self.j.peek().unwrap().clone(), self.k.next().unwrap()))
+                } else {
+                    self.i = self.i_orig.clone();
+                    Some((self.i.peek().unwrap().clone(), self.j.peek().unwrap().clone(), self.k.next().unwrap()))
+                }
             }
-            Ok(Ready(Some(())))
         }
+    }
+}
+
+#[cfg(feature = "unstable")]
+impl<I, J, K> FusedIterator for CarryingUpIterator<I, J, K>
+    where I: Iterator + Clone, J: Iterator + Clone, K: Iterator + Clone, I::Item: Clone, J::Item: Clone {}
+
+impl<I> MergedIterator<I> where I: Iterator {
+    pub fn new<J: IntoIterator<Item=I>>(iters: J) -> Self {
+        MergedIterator {
+            iters: iters.into_iter().map(|i| i.peekable()).collect(),
+        }
+    }
+}
+
+impl<I> Iterator for MergedIterator<I> where I: Iterator, I::Item: Ord + Copy {
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<I::Item> {
+        // TODO: explore more efficient way.
+        let mut cloned: Vec<_> = self.iters.iter_mut()
+            .map(|i| i.peek().cloned())
+            .collect();
+
+        // Remove iterators that don't have next item.
+        {
+            let mut has_next = cloned.iter().map(Option::is_some);
+            self.iters.retain(|_| has_next.next().unwrap());
+        }
+        cloned.retain(Option::is_some);
+
+        self.iters.iter_mut()
+            .rev()
+            .min_by_key(|_| cloned.pop())
+            .and_then(Iterator::next)
     }
 }
 
@@ -179,37 +197,6 @@ impl<T> DerefMut for SyncFile<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.data }
 }
 
-impl<I> MergedIterator<I> where I: Iterator {
-    fn new<J: IntoIterator<Item=I>>(iters: J) -> Self {
-        MergedIterator {
-            iters: iters.into_iter().map(|i| i.peekable()).collect(),
-        }
-    }
-}
-
-impl<I> Iterator for MergedIterator<I> where I: Iterator, I::Item: Ord + Copy {
-    type Item = I::Item;
-
-    fn next(&mut self) -> Option<I::Item> {
-        // TODO: explore more efficient way.
-        let mut cloned: Vec<_> = self.iters.iter_mut()
-            .map(|i| i.peek().cloned())
-            .collect();
-
-        // Remove iterators that don't have next item.
-        {
-            let mut has_next = cloned.iter().map(Option::is_some);
-            self.iters.retain(|_| has_next.next().unwrap());
-        }
-        cloned.retain(Option::is_some);
-
-        self.iters.iter_mut()
-            .rev()
-            .min_by_key(|_| cloned.pop())
-            .and_then(Iterator::next)
-    }
-}
-
 /// Returns an integer representation of the rightmost contiguous digits in `s`.
 pub fn ratoi(s: &str) -> Option<u64> {
     fn atoi(c: u8) -> Option<u8> {
@@ -276,16 +263,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn carrying_up_iter() {
+        let a0 = [1, 2];
+        let a1 = ['x', 'y'];
+        let a2 = ['A', 'B', 'C'];
+
+        let mut iter = CarryingUpIterator::new(a0.iter().cloned(), a1.iter().cloned(), a2.iter().cloned()).unwrap();
+
+        assert_eq!(Some((1, 'x', 'A')), iter.next());
+        assert_eq!(Some((1, 'x', 'B')), iter.next());
+        assert_eq!(Some((1, 'x', 'C')), iter.next());
+
+        assert_eq!(Some((1, 'y', 'A')), iter.next());
+        assert_eq!(Some((1, 'y', 'B')), iter.next());
+        assert_eq!(Some((1, 'y', 'C')), iter.next());
+
+        assert_eq!(Some((2, 'x', 'A')), iter.next());
+        assert_eq!(Some((2, 'x', 'B')), iter.next());
+        assert_eq!(Some((2, 'x', 'C')), iter.next());
+
+        assert_eq!(Some((2, 'y', 'A')), iter.next());
+        assert_eq!(Some((2, 'y', 'B')), iter.next());
+        assert_eq!(Some((2, 'y', 'C')), iter.next());
+
+        assert_eq!(Some((1, 'x', 'A')), iter.next());
+        assert_eq!(Some((1, 'x', 'B')), iter.next());
+    }
+
+    #[test]
     fn merged_iter() {
-        let mut a0 = vec![1,4,7,10];
-        let mut a1 = vec![3,4,5,6];
-        let mut a2 = vec![2,5,8,11];
-        let mut arrays = vec![
-            a0.drain(..),
-            a1.drain(..),
-            a2.drain(..),
-        ];
-        let merged: Vec<_> = MergedIterator::new(arrays.drain(..)).collect();
+        let a0 = [1 ,4, 7, 10];
+        let a1 = [3 ,4, 5, 6];
+        let a2 = [2 ,5, 8, 11];
+
+        let arrays = [a0.iter().cloned(), a1.iter().cloned(), a2.iter().cloned()];
+
+        let merged: Vec<_> = MergedIterator::new(arrays.iter().cloned()).collect();
+
         assert_eq!([1, 2, 3, 4, 4, 5, 5, 6, 7, 8, 10, 11].as_ref(), merged.as_slice());
     }
 

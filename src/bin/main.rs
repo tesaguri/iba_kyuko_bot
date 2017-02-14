@@ -1,9 +1,9 @@
+#![cfg_attr(unstable, feature(fused))]
 #![recursion_limit = "1024"]
 
 extern crate chrono;
 #[macro_use]
 extern crate clap;
-extern crate cron;
 extern crate egg_mode;
 extern crate either;
 extern crate env_logger;
@@ -26,6 +26,7 @@ mod admin;
 mod config;
 mod daemon_main;
 mod message;
+mod schedule;
 mod util;
 
 mod errors {

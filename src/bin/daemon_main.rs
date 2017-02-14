@@ -1,15 +1,18 @@
+use chrono::Local;
 use config::*;
-use cron::parser::Parser as CronParser;
 use egg_mode::direct;
 use errors::*;
 use hyper::client::Client;
 use iba_kyuko_bot::Kyuko;
+use schedule::Schedule;
 use std::collections::HashMap;
 use std::fs::File;
 use twitter_stream::messages::{DirectMessage, StreamMessage};
-use util::{Schedule, SyncFile};
+use util::SyncFile;
 
-pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, settings: Settings, archive: File) -> Result<()> {
+pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, settings: Settings, archive: File)
+    -> Result<()>
+{
     use egg_mode::service;
     use futures::{Future, Stream};
     use json;
@@ -22,13 +25,8 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
         (conf.short_url_length, conf.short_url_length_https)
     };
 
-    let mut schedule = Vec::with_capacity(settings.schedule.len());
-    for s in &settings.schedule {
-        let sched = CronParser.parse(s)
-            .chain_err(|| format!("failed to parse a cron expression {:?}", s))?;
-        schedule.push(sched);
-    }
-    let schedule = Schedule::new(&schedule);
+    let tz = Local;
+    let schedule = Schedule::new(&settings.schedule, &tz);
 
     let dms = TwitterJsonStream::user(
         &settings.consumer_key, &settings.consumer_secret,
