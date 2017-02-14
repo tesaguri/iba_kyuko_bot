@@ -104,7 +104,7 @@ fn follow<'a, I: Iterator<Item=&'a str>>(mut tokens: I, response: &mut String,
                     "follow: 講座「{} [{}]」についての{}情報\
                         （https://twitter.com/{}/status/{}）を{}に通知します。",
                     "You will be reminded of the {2} information of the lecture \
-                        \"{0}\" by {1} (https://twitter.com/{3}/status/{4}, on {5}.",
+                        \"{0}\" by {1} (https://twitter.com/{3}/status/{4}), on {5}.",
                     k.title, k.lecturer, k.kind, recipient_screen_name, tweet_id, datefmt
                 );
             },

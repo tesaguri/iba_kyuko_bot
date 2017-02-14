@@ -197,6 +197,14 @@ impl Deserialize for UnitSchedule {
                     Ok(ret)
                 }
 
+                fn visit_str<E: DeserializeError>(self, s: &str) -> Result<Vec<u32>, E> {
+                    parse_range(s).map_err(|_| E::custom("expected a number"))
+                }
+
+                fn visit_string<E: DeserializeError>(self, s: String) -> Result<Vec<u32>, E> {
+                    self.visit_str(&s)
+                }
+
                 fn visit_u32<E>(self, n: u32) -> Result<Vec<u32>, E> {
                     Ok(vec![n])
                 }
@@ -289,6 +297,28 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
+/// Parses a string representing a range. e.g. "1-5" = [1, 5] (inclusive).
+fn parse_range(s: &str) -> ::std::result::Result<Vec<u32>, ::std::num::ParseIntError> {
+    let mut ret = Vec::new();
+
+    for r in s.split(',') {
+        let r = r.trim();
+
+        let (start, end): (u32, u32) = if let Some(i) = r.find('-') {
+            let (s, e) = r.split_at(i);
+            let e = &e[1..];
+            (s.parse()?, e.parse()?)
+        } else {
+            let n = r.parse()?;
+            (n, n)
+        };
+
+        ret.extend(start..(end+1))
+    }
+
+    Ok(ret)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,5 +364,17 @@ mod tests {
         assert!(UnitSchedule::new(vec![7], vec![ 0], vec![ 0]).is_none());
         assert!(UnitSchedule::new(vec![0], vec![24], vec![ 0]).is_none());
         assert!(UnitSchedule::new(vec![0], vec![ 0], vec![60]).is_none());
+    }
+
+    #[test]
+    fn range() {
+        assert_eq!(&[12], parse_range("12").unwrap().as_slice());
+        assert_eq!(&[1, 2, 3, 4, 5, 6], parse_range("1-6").unwrap().as_slice());
+        assert_eq!(&[20, 40], parse_range("20,40").unwrap().as_slice());
+        assert_eq!(&[1, 2, 3, 7, 8, 9, 12], parse_range("1-3, 7-9,12").unwrap().as_slice());
+
+        assert!(parse_range("1-").is_err());
+        assert!(parse_range("2- 3").is_err());
+        assert!(parse_range("3-4-4").is_err());
     }
 }
