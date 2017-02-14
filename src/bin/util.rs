@@ -197,39 +197,6 @@ impl<T> DerefMut for SyncFile<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.data }
 }
 
-/// Returns an integer representation of the rightmost contiguous digits in `s`.
-pub fn ratoi(s: &str) -> Option<u64> {
-    fn atoi(c: u8) -> Option<u8> {
-        if b'0' <= c && c <= b'9' {
-            Some(c - b'0')
-        } else {
-            None
-        }
-    }
-
-    let mut iter = s.as_bytes().iter().cloned().rev();
-
-    while let Some(b) = iter.next() {
-        if let Some(n) = atoi(b) {
-            let mut ret = n as u64;
-            let mut exp = 1;
-
-            for b in iter {
-                if let Some(n) = atoi(b) {
-                    exp *= 10;
-                    ret += exp * n as u64;
-                } else {
-                    break;
-                }
-            }
-
-            return Some(ret);
-        }
-    }
-
-    None
-}
-
 fn temp_path() -> PathBuf {
     use rand::{self, Rng};
     use std::env;
@@ -301,14 +268,5 @@ mod tests {
         let merged: Vec<_> = MergedIterator::new(arrays.iter().cloned()).collect();
 
         assert_eq!([1, 2, 3, 4, 4, 5, 5, 6, 7, 8, 10, 11].as_ref(), merged.as_slice());
-    }
-
-    #[test]
-    fn rdigits_test() {
-        assert_eq!(Some(1234567890), ratoi("1234567890"));
-        assert_eq!(Some(145344012), ratoi("https://twitter.com/Twitter/status/145344012"));
-        assert_eq!(Some(815348177809408001), ratoi("https://twitter.com/Twitter/status/815348177809408001/"));
-        assert_eq!(Some(600324682190053376), ratoi("https://twitter.com/POTUS44/status/600324682190053376"));
-        assert_eq!(None, ratoi("https://twitter.com/Twitter/"));
     }
 }

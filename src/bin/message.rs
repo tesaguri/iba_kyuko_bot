@@ -2,7 +2,7 @@ use config::{Follow, FollowError, Settings, Tweeted, UserInfo, UserMap};
 use errors::*;
 use std::fmt::Write;
 use twitter_stream::messages::User;
-use util::{self, SyncFile};
+use util::SyncFile;
 
 const WRITE_FAILED: &'static str = "failed to write a message to a String";
 
@@ -150,9 +150,9 @@ fn follow<'a, I: Iterator<Item=&'a str>>(mut tokens: I, response: &mut String,
                     register!(Pattern { title: t.to_owned(), lecturer: None });
                 }
 
-                for tweet in tokens.by_ref() {
-                    if let Some(id) = util::ratoi(tweet) {
-                        register!(TweetId(id));
+                for tweet_id in tokens.by_ref() {
+                    if let Ok(tweet_id) = tweet_id.parse() {
+                        register!(TweetId(tweet_id));
                     }
                 }
             },
