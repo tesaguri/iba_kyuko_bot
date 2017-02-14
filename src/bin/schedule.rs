@@ -4,6 +4,7 @@ use errors::*;
 use futures::{Poll, Stream};
 use serde::de::{Deserialize, Deserializer, Error as DeserializeError, SeqVisitor, Visitor};
 use std::iter::Cloned;
+use std::ops::Range;
 use std::slice;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -184,21 +185,78 @@ impl Deserialize for UnitSchedule {
 
             struct NumsVisitor;
 
+            macro_rules! visit_as_u32 {
+                ($name:ident, $t:ty, $u:ty, $map:expr) => {
+                    #[allow(unused_comparisons)]
+                    fn $name<E: DeserializeError>(self, n: $t) -> Result<$u, E> {
+                        if 0 <= n && n as u64 <= ::std::u32::MAX as u64 {
+                            Ok($map(n as u32))
+                        } else {
+                            Err(E::custom(format!("u32 out of range: {}", n)))
+                        }
+                    }
+                }
+            }
+
             impl Visitor for NumsVisitor {
                 type Value = Vec<u32>;
 
                 fn visit_seq<V: SeqVisitor>(self, mut v: V) -> Result<Vec<u32>, V::Error> {
+                    enum NumOrRange {
+                        Num(u32),
+                        Range(Range<u32>),
+                    }
+
+                    impl Deserialize for NumOrRange {
+                        fn deserialize<D: Deserializer>(d: D) -> Result<Self, D::Error> {
+                            struct NumRangeVisitor;
+
+                            impl Visitor for NumRangeVisitor {
+                                type Value = NumOrRange;
+
+                                fn visit_str<E: DeserializeError>(self, s: &str) -> Result<NumOrRange, E> {
+                                    parse_range(s).map(NumOrRange::Range).map_err(|_| E::custom("expected a number"))
+                                }
+
+                                fn visit_string<E: DeserializeError>(self, s: String) -> Result<NumOrRange, E> {
+                                    self.visit_str(&s)
+                                }
+
+                                fn visit_u32<E>(self, n: u32) -> Result<NumOrRange, E> {
+                                    Ok(NumOrRange::Num(n))
+                                }
+
+                                visit_as_u32!(visit_u64, u64, NumOrRange, NumOrRange::Num);
+                                visit_as_u32!(visit_u16, u16, NumOrRange, NumOrRange::Num);
+                                visit_as_u32!(visit_u8, u8, NumOrRange, NumOrRange::Num);
+                                visit_as_u32!(visit_i64, i64, NumOrRange, NumOrRange::Num);
+                                visit_as_u32!(visit_i32, i32, NumOrRange, NumOrRange::Num);
+                                visit_as_u32!(visit_i16, i16, NumOrRange, NumOrRange::Num);
+                                visit_as_u32!(visit_i8, i8, NumOrRange, NumOrRange::Num);
+
+                                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                                    write!(f, "an unsigned integer or a string")
+                                }
+                            }
+
+                            d.deserialize_u32(NumRangeVisitor)
+                        }
+                    }
+
                     let mut ret = Vec::with_capacity(v.size_hint().0);
 
-                    while let Some(n) = v.visit()? {
-                        ret.push(n);
+                    while let Some(num_or_range) = v.visit()? {
+                        match num_or_range {
+                            NumOrRange::Num(n) => ret.push(n),
+                            NumOrRange::Range(r) => ret.extend(r),
+                        }
                     }
 
                     Ok(ret)
                 }
 
                 fn visit_str<E: DeserializeError>(self, s: &str) -> Result<Vec<u32>, E> {
-                    parse_range(s).map_err(|_| E::custom("expected a number"))
+                    parse_range(s).map(Iterator::collect).map_err(|_| E::custom("expected a pair of numbers"))
                 }
 
                 fn visit_string<E: DeserializeError>(self, s: String) -> Result<Vec<u32>, E> {
@@ -209,60 +267,20 @@ impl Deserialize for UnitSchedule {
                     Ok(vec![n])
                 }
 
-                fn visit_u64<E: DeserializeError>(self, n: u64) -> Result<Vec<u32>, E> {
-                    if n <= u32::MAX as u64 {
-                        Ok(vec![n as u32])
-                    } else {
-                        Err(E::custom(format!("u32 out of range: {}", n)))
-                    }
-                }
-
-                fn visit_u16<E>(self, n: u16) -> Result<Vec<u32>, E> {
-                    Ok(vec![n as u32])
-                }
-
-                fn visit_u8<E>(self, n: u8) -> Result<Vec<u32>, E> {
-                    Ok(vec![n as u32])
-                }
-
-                fn visit_i64<E: DeserializeError>(self, n: i64) -> Result<Vec<u32>, E> {
-                    if 0 <= n && n <= u32::MAX as i64 {
-                        Ok(vec![n as u32])
-                    } else {
-                        Err(E::custom(format!("u32 out of range: {}", n)))
-                    }
-                }
-
-                fn visit_i32<E: DeserializeError>(self, n: i32) -> Result<Vec<u32>, E> {
-                    if n.is_negative() {
-                        Err(E::custom(format!("u32 out of range: {}", n)))
-                    } else {
-                        Ok(vec![n as u32])
-                    }
-                }
-
-                fn visit_i16<E: DeserializeError>(self, n: i16) -> Result<Vec<u32>, E> {
-                    if n.is_negative() {
-                        Err(E::custom(format!("u32 out of range: {}", n)))
-                    } else {
-                        Ok(vec![n as u32])
-                    }
-                }
-
-                fn visit_i8<E: DeserializeError>(self, n: i8) -> Result<Vec<u32>, E> {
-                    if n.is_negative() {
-                        Err(E::custom(format!("u32 out of range: {}", n)))
-                    } else {
-                        Ok(vec![n as u32])
-                    }
-                }
+                visit_as_u32!(visit_u64, u64, Vec<u32>, |n| vec![n]);
+                visit_as_u32!(visit_u16, u16, Vec<u32>, |n| vec![n]);
+                visit_as_u32!(visit_u8, u8, Vec<u32>, |n| vec![n]);
+                visit_as_u32!(visit_i64, i64, Vec<u32>, |n| vec![n]);
+                visit_as_u32!(visit_i32, i32, Vec<u32>, |n| vec![n]);
+                visit_as_u32!(visit_i16, i16, Vec<u32>, |n| vec![n]);
+                visit_as_u32!(visit_i8, i8, Vec<u32>, |n| vec![n]);
 
                 fn visit_unit<E>(self) -> Result<Vec<u32>, E> {
                     Ok(Vec::new())
                 }
 
                 fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                    write!(f, "an unsigned integer or array of unsigned integers")
+                    write!(f, "an unsigned integer, an array of unsigned integers or a string")
                 }
             }
 
@@ -298,25 +316,18 @@ impl<'a> Iterator for Iter<'a> {
 }
 
 /// Parses a string representing a range. e.g. "1-5" = [1, 5] (inclusive).
-fn parse_range(s: &str) -> ::std::result::Result<Vec<u32>, ::std::num::ParseIntError> {
-    let mut ret = Vec::new();
+fn parse_range(s: &str) -> ::std::result::Result<Range<u32>, ()> {
+    if let Some(i) = s.find('-') {
+        let (s, e) = s.split_at(i);
+        let e = &e[1..];
 
-    for r in s.split(',') {
-        let r = r.trim();
+        let s = s.parse().map_err(|_| ())?;
+        let e = 1 + e.parse::<u32>().map_err(|_| ())?;
 
-        let (start, end): (u32, u32) = if let Some(i) = r.find('-') {
-            let (s, e) = r.split_at(i);
-            let e = &e[1..];
-            (s.parse()?, e.parse()?)
-        } else {
-            let n = r.parse()?;
-            (n, n)
-        };
-
-        ret.extend(start..(end+1))
+        Ok(s..e)
+    } else {
+        Err(())
     }
-
-    Ok(ret)
 }
 
 #[cfg(test)]
@@ -368,11 +379,11 @@ mod tests {
 
     #[test]
     fn range() {
-        assert_eq!(&[12], parse_range("12").unwrap().as_slice());
-        assert_eq!(&[1, 2, 3, 4, 5, 6], parse_range("1-6").unwrap().as_slice());
-        assert_eq!(&[20, 40], parse_range("20,40").unwrap().as_slice());
-        assert_eq!(&[1, 2, 3, 7, 8, 9, 12], parse_range("1-3, 7-9,12").unwrap().as_slice());
+        assert_eq!(Ok(1..7), parse_range("1-6"));
+        assert_eq!(Ok(0..12), parse_range("0-11"));
 
+        assert!(parse_range("").is_err());
+        assert!(parse_range("0").is_err());
         assert!(parse_range("1-").is_err());
         assert!(parse_range("2- 3").is_err());
         assert!(parse_range("3-4-4").is_err());
