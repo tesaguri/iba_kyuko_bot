@@ -2,7 +2,7 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, UTC};
 use chrono::prelude::*;
 use errors::*;
 use futures::{Poll, Stream};
-use serde::de::{Deserialize, Deserializer, SeqVisitor, Visitor};
+use serde::de::{Deserialize, Deserializer, Error as DeserializeError, SeqVisitor, Visitor};
 use std::iter::Cloned;
 use std::slice;
 use std::sync::Arc;
@@ -176,11 +176,11 @@ impl UnitSchedule {
 
 impl Deserialize for UnitSchedule {
     fn deserialize<D: Deserializer>(d: D) -> ::std::result::Result<Self, D::Error> {
-        use serde::de::Error;
         use std::result::Result;
 
         fn deserialize_nums<D: Deserializer>(d: D) -> Result<Vec<u32>, D::Error> {
             use std::fmt;
+            use std::u32;
 
             struct NumsVisitor;
 
@@ -199,6 +199,54 @@ impl Deserialize for UnitSchedule {
 
                 fn visit_u32<E>(self, n: u32) -> Result<Vec<u32>, E> {
                     Ok(vec![n])
+                }
+
+                fn visit_u64<E: DeserializeError>(self, n: u64) -> Result<Vec<u32>, E> {
+                    if n <= u32::MAX as u64 {
+                        Ok(vec![n as u32])
+                    } else {
+                        Err(E::custom(format!("u32 out of range: {}", n)))
+                    }
+                }
+
+                fn visit_u16<E>(self, n: u16) -> Result<Vec<u32>, E> {
+                    Ok(vec![n as u32])
+                }
+
+                fn visit_u8<E>(self, n: u8) -> Result<Vec<u32>, E> {
+                    Ok(vec![n as u32])
+                }
+
+                fn visit_i64<E: DeserializeError>(self, n: i64) -> Result<Vec<u32>, E> {
+                    if 0 <= n && n <= u32::MAX as i64 {
+                        Ok(vec![n as u32])
+                    } else {
+                        Err(E::custom(format!("u32 out of range: {}", n)))
+                    }
+                }
+
+                fn visit_i32<E: DeserializeError>(self, n: i32) -> Result<Vec<u32>, E> {
+                    if n.is_negative() {
+                        Err(E::custom(format!("u32 out of range: {}", n)))
+                    } else {
+                        Ok(vec![n as u32])
+                    }
+                }
+
+                fn visit_i16<E: DeserializeError>(self, n: i16) -> Result<Vec<u32>, E> {
+                    if n.is_negative() {
+                        Err(E::custom(format!("u32 out of range: {}", n)))
+                    } else {
+                        Ok(vec![n as u32])
+                    }
+                }
+
+                fn visit_i8<E: DeserializeError>(self, n: i8) -> Result<Vec<u32>, E> {
+                    if n.is_negative() {
+                        Err(E::custom(format!("u32 out of range: {}", n)))
+                    } else {
+                        Ok(vec![n as u32])
+                    }
                 }
 
                 fn visit_unit<E>(self) -> Result<Vec<u32>, E> {
