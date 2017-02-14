@@ -227,8 +227,7 @@ fn format_tweet(dept: &str, k: &Kyuko, url: &str, url_len: (i32, i32)) -> String
     if len > 140 {
         while len > 140 {
             let c = ret.pop();
-            #[cfg(debug_assertions)]
-            c.unwrap();
+            debug_assert!(c.is_some());
             len -= 1;
         }
         ret.pop();
