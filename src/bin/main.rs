@@ -78,7 +78,6 @@ fn run() -> Result<()> {
 
     let working_dir = matches.value_of("WORKING_DIR").unwrap();
 
-    info!("loading the working directory {:?}", working_dir);
     let (mut tweeted, mut users, settings, archive) = config::load(working_dir)?;
     info!("settings: {:?}", settings);
 

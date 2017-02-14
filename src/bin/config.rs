@@ -121,6 +121,7 @@ impl Settings {
 impl fmt::Debug for Settings {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_struct("Settings")
+            .field("schedule", &self.schedule)
             .field("admins", &self.admins)
             .field("user_agent", &self.user_agent)
             .field("urls", &self.user_agent)
