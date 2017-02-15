@@ -197,6 +197,14 @@ impl<T> DerefMut for SyncFile<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.data }
 }
 
+/// Shortens `s` and places an ellipsis (`…`) on the end of it if `s.len() > limit`. `limit` must not be zero.
+pub fn shorten(s: &mut String, limit: usize) {
+    if s.len() > limit {
+        s.truncate(limit - 1);
+        s.push('…');
+    }
+}
+
 fn temp_path() -> PathBuf {
     use rand::{self, Rng};
     use std::env;

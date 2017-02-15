@@ -8,7 +8,7 @@ use schedule::Schedule;
 use std::collections::HashMap;
 use std::fs::File;
 use twitter_stream::messages::{DirectMessage, StreamMessage};
-use util::SyncFile;
+use util::{self, SyncFile};
 
 pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, settings: Settings, archive: File)
     -> Result<()>
@@ -19,11 +19,11 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     use json;
     use twitter_stream::TwitterJsonStream;
 
-    let url_len = {
+    let (url_len, dm_text_limit) = {
         let conf = service::config(&settings.token())
             .chain_err(|| "failed to fetch Twitter's service config")?
             .response;
-        (conf.short_url_length, conf.short_url_length_https)
+        ((conf.short_url_length, conf.short_url_length_https), conf.dm_text_character_limit as usize)
     };
 
     let tz = Local;
@@ -39,10 +39,10 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
         .chain_err(|| "failed to connect to User Stream")?
         .then(|r| r.chain_err(|| "an error occured while listening on User Stream"))
         .filter_map(|json| if let Ok(StreamMessage::DirectMessage(dm)) = json::from_str(&json) {
-            if dm.sender_id == id {
-                None
-            } else {
+            if dm.recipient_id == id {
                 Some(dm)
+            } else {
+                None
             }
         } else {
             None
@@ -54,9 +54,9 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
         use futures::stream::MergedItem::*;
         match merged {
             First(()) => update(&mut tweeted, &users, &settings, &archive, &client, url_len),
-            Second(dm) => direct_message(dm, &mut tweeted, &mut users, &settings),
+            Second(dm) => direct_message(dm, &mut tweeted, &mut users, &settings, dm_text_limit),
             Both((), dm) => {
-                direct_message(dm, &mut tweeted, &mut users, &settings)?;
+                direct_message(dm, &mut tweeted, &mut users, &settings, dm_text_limit)?;
                 update(&mut tweeted, &users, &settings, &archive, &client, url_len)
             },
         }
@@ -173,11 +173,12 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
 }
 
 fn direct_message(dm: DirectMessage, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<UserMap>,
-    settings: &Settings) -> Result<()>
+    settings: &Settings, dm_text_limit: usize) -> Result<()>
 {
-    let response = ::message::message(dm.text, dm.sender, users, dm.recipient.screen_name, tweeted, settings)?;
+    let mut response = ::message::message(dm.text, dm.sender, users, dm.recipient.screen_name, tweeted, settings)?;
 
     if !response.is_empty() {
+        util::shorten(&mut response, dm_text_limit);
         if let Err(e) = direct::send(dm.sender_id, &response, &settings.token()) {
             warn!("failed to send a direct message {:?}\ncaused by: {:?}", response, e);
         }
