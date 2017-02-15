@@ -88,11 +88,11 @@ pub fn load<P: AsRef<Path>>(working_dir: P) -> Result<(SyncFile<Tweeted>, SyncFi
         }};
     }
 
-    let tweeted = for_file!("tweets.yaml", SyncFile::new).chain_err(|| "unable to open tweets.yaml")?;
-    let users = for_file!("users.yaml", SyncFile::new).chain_err(|| "unable to open users.yaml")?;
+    let tweeted = for_file!("tweets.yml", SyncFile::new).chain_err(|| "unable to open tweets.yml")?;
+    let users = for_file!("users.yml", SyncFile::new).chain_err(|| "unable to open users.yml")?;
     let settings: Settings = ::yaml::from_reader(
-        for_file!("settings.yaml", File::open).chain_err(|| "unable to open settings.yaml")?
-    ).chain_err(|| "failed to load settings.yaml")?;
+        for_file!("settings.yml", File::open).chain_err(|| "unable to open settings.yml")?
+    ).chain_err(|| "failed to load settings.yml")?;
     let archive = for_file!("archive.tsv", |path| OpenOptions::new().append(true).create(true).open(path))
         .chain_err(|| "unable to open archive.tsv")?;
 
@@ -102,7 +102,7 @@ pub fn load<P: AsRef<Path>>(working_dir: P) -> Result<(SyncFile<Tweeted>, SyncFi
 impl Follow {
     pub fn matches(&self, k: &Kyuko) -> bool {
         if let Follow::Pattern { ref title, ref lecturer } = *self {
-            k.title.contains(title) && lecturer.as_ref().map(|l| k.lecturer.contains(l)).unwrap_or(true)
+            k.title.contains(title) && lecturer.as_ref().map_or(true, |l| k.lecturer.contains(l))
         } else {
             false
         }
