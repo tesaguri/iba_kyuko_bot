@@ -7,7 +7,7 @@ use iba_kyuko_bot::Kyuko;
 use schedule::Schedule;
 use std::collections::HashMap;
 use std::fs::File;
-use twitter_stream::messages::{DirectMessage, StreamMessage};
+use twitter_stream::messages::{DirectMessage, StreamMessage, Tweet};
 use util::{self, SyncFile};
 
 pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, settings: Settings, archive: File)
@@ -18,6 +18,11 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     use futures::{Future, Stream};
     use json;
     use twitter_stream::TwitterJsonStream;
+
+    enum TweetOrDm {
+        Tweet(Tweet),
+        Dm(DirectMessage),
+    }
 
     let (url_len, dm_text_limit) = {
         let conf = service::config(&settings.token())
@@ -32,31 +37,41 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     let Response { response: TwitterUser { id, .. }, .. } = egg_mode::verify_tokens(&settings.token())
         .chain_err(|| "failed to retrieve the information of the authenticating user")?;
 
-    let dms = TwitterJsonStream::user(
+    let messages = TwitterJsonStream::user(
         &settings.consumer_key, &settings.consumer_secret,
         &settings.access_key, &settings.access_secret
     )
         .chain_err(|| "failed to connect to User Stream")?
         .then(|r| r.chain_err(|| "an error occured while listening on User Stream"))
-        .filter_map(|json| if let Ok(StreamMessage::DirectMessage(dm)) = json::from_str(&json) {
-            if dm.recipient_id == id {
-                Some(dm)
+        .filter_map(|json| match json::from_str(&json) {
+            Ok(StreamMessage::Tweet(t)) => if (&t).in_reply_to_user_id == Some(id) {
+                Some(TweetOrDm::Tweet(t))
             } else {
                 None
-            }
-        } else {
-            None
+            },
+            Ok(StreamMessage::DirectMessage(dm)) => if (&dm).recipient_id == id {
+                Some(TweetOrDm::Dm(dm))
+            } else {
+                None
+            },
+            _ => None,
         });
 
     let client = Client::new();
 
-    let future = schedule.merge(dms).for_each(|merged| {
+    let future = schedule.merge(messages).for_each(|merged| {
         use futures::stream::MergedItem::*;
         match merged {
             First(()) => update(&mut tweeted, &users, &settings, &archive, &client, url_len),
-            Second(dm) => direct_message(dm, &mut tweeted, &mut users, &settings, dm_text_limit),
-            Both((), dm) => {
-                direct_message(dm, &mut tweeted, &mut users, &settings, dm_text_limit)?;
+            Second(msg) => match msg {
+                TweetOrDm::Tweet(t) => reply(t, &mut tweeted, &mut users, &settings),
+                TweetOrDm::Dm(dm) => direct_message(dm, &mut tweeted, &mut users, &settings, dm_text_limit),
+            },
+            Both((), msg) => {
+                match msg {
+                    TweetOrDm::Tweet(t) => reply(t, &mut tweeted, &mut users, &settings)?,
+                    TweetOrDm::Dm(dm) => direct_message(dm, &mut tweeted, &mut users, &settings, dm_text_limit)?,
+                }
                 update(&mut tweeted, &users, &settings, &archive, &client, url_len)
             },
         }
@@ -172,10 +187,18 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
     Ok(())
 }
 
+fn reply(tweet: Tweet, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<UserMap>,
+    settings: &Settings) -> Result<()>
+{
+    unimplemented!();
+}
+
 fn direct_message(dm: DirectMessage, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<UserMap>,
     settings: &Settings, dm_text_limit: usize) -> Result<()>
 {
-    let mut response = ::message::message(dm.text, dm.sender, users, dm.recipient.screen_name, tweeted, settings)?;
+    let mut response = ::message::message(
+        &dm.text, dm.sender, users, dm.recipient.screen_name, tweeted, settings, None
+    )?;
 
     if !response.is_empty() {
         util::shorten(&mut response, dm_text_limit);

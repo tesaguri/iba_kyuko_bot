@@ -1,7 +1,7 @@
 use config::{Follow, FollowError, Settings, Tweeted, UserInfo, UserMap};
 use errors::*;
 use std::fmt::Write;
-use twitter_stream::messages::User;
+use twitter_stream::messages::{StatusId, User};
 use util::SyncFile;
 
 const WRITE_FAILED: &'static str = "failed to write a message to a String";
@@ -16,8 +16,8 @@ macro_rules! respondln {
     };
 }
 
-pub fn message(text: String, sender: User, users: &mut SyncFile<UserMap>, recipient_screen_name: String,
-    tweeted: &mut SyncFile<Tweeted>, settings: &Settings) -> Result<String>
+pub fn message(text: &str, sender: User, users: &mut SyncFile<UserMap>, recipient_screen_name: String,
+    tweeted: &mut SyncFile<Tweeted>, settings: &Settings, in_reply_to: Option<StatusId>) -> Result<String>
 {
     use admin;
     use std::fmt::Write;
