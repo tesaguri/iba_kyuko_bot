@@ -205,6 +205,18 @@ pub fn shorten(s: &mut String, limit: usize) {
     }
 }
 
+pub fn shorten_tweet(s: &mut String, limit: usize, url_len: (i32, i32)) {
+    use egg_mode::text::character_count;
+
+    while character_count(&s, url_len.0, url_len.1).0 > limit {
+        let c = s.pop();
+        debug_assert!(c.is_some());
+        let c = s.pop();
+        debug_assert!(c.is_some());
+        s.push('…');
+    }
+}
+
 fn temp_path() -> PathBuf {
     use rand::{self, Rng};
     use std::env;

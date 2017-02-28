@@ -1,10 +1,13 @@
 use chrono::Local;
 use config::*;
 use egg_mode::direct;
+use egg_mode::user::{self, TwitterUser};
+use egg_mode::tweet::DraftTweet;
 use errors::*;
 use hyper::client::Client;
 use iba_kyuko_bot::Kyuko;
 use schedule::Schedule;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use twitter_stream::messages::{DirectMessage, StreamMessage, Tweet};
@@ -14,14 +17,13 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     -> Result<()>
 {
     use egg_mode::{self, service, Response};
-    use egg_mode::user::TwitterUser;
     use futures::{Future, Stream};
     use json;
     use twitter_stream::TwitterJsonStream;
 
     enum TweetOrDm {
-        Tweet(Tweet),
         Dm(DirectMessage),
+        Tweet(Tweet),
     }
 
     let (url_len, dm_text_limit) = {
@@ -44,12 +46,14 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
         .chain_err(|| "failed to connect to User Stream")?
         .then(|r| r.chain_err(|| "an error occured while listening on User Stream"))
         .filter_map(|json| match json::from_str(&json) {
-            Ok(StreamMessage::Tweet(t)) => if (&t).in_reply_to_user_id == Some(id) {
+            Ok(StreamMessage::Tweet(t)) => if t.in_reply_to_user_id == Some(id) {
                 Some(TweetOrDm::Tweet(t))
             } else {
+                // XXX: This clause can be removed after RFC 0107 was implemented.
+                // cf. https://github.com/rust-lang/rfcs/blob/master/text/0107-pattern-guards-with-bind-by-move.md
                 None
             },
-            Ok(StreamMessage::DirectMessage(dm)) => if (&dm).recipient_id == id {
+            Ok(StreamMessage::DirectMessage(dm)) => if dm.recipient_id == id {
                 Some(TweetOrDm::Dm(dm))
             } else {
                 None
@@ -64,12 +68,12 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
         match merged {
             First(()) => update(&mut tweeted, &users, &settings, &archive, &client, url_len),
             Second(msg) => match msg {
-                TweetOrDm::Tweet(t) => reply(t, &mut tweeted, &mut users, &settings),
+                TweetOrDm::Tweet(t) => reply(t, &mut tweeted, &mut users, &settings, url_len),
                 TweetOrDm::Dm(dm) => direct_message(dm, &mut tweeted, &mut users, &settings, dm_text_limit),
             },
             Both((), msg) => {
                 match msg {
-                    TweetOrDm::Tweet(t) => reply(t, &mut tweeted, &mut users, &settings)?,
+                    TweetOrDm::Tweet(t) => reply(t, &mut tweeted, &mut users, &settings, url_len)?,
                     TweetOrDm::Dm(dm) => direct_message(dm, &mut tweeted, &mut users, &settings, dm_text_limit)?,
                 }
                 update(&mut tweeted, &users, &settings, &archive, &client, url_len)
@@ -85,8 +89,6 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
 fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: &Settings, archive: &File,
     client: &Client, url_len: (i32, i32)) -> Result<()>
 {
-    use egg_mode::tweet::DraftTweet;
-
     fn fetch(url: &str, client: &Client, user_agent: &str, keep_alive: bool) -> Result<String> {
         use hyper::header::{Connection, UserAgent};
         use hyper::status::StatusCode;
@@ -169,11 +171,34 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
                 info!("successfully tweeted: status_id = {}\n{}", id, text);
 
                 // Send notifications to users following the information:
-                for (user_id, _) in users.iter().filter(|&(_, u)| u.following.values().any(|f| f.matches(&k))) {
+                for (user_id, via) in users.iter().filter_map(|(user_id, u)| {
+                    if let Some(&FollowEntry(_, via)) = u.following.values()
+                        .find(|&&FollowEntry(ref f, _)| f.matches(&k))
+                    {
+                        Some((user_id, via))
+                    } else {
+                        None
+                    }
+                }) {
                     let user_id: u64 = user_id.parse()
                         .chain_err(|| format!("invalid user ID in {:?}", users.file_name()))?;
-                    if let Err(e) = direct::send(user_id, &text, &settings.token()) {
-                        warn!("failed to send a direct message {:?}\ncaused by: {:?}", text, e);
+                    match via {
+                        MessageMethod::Dm => if let Err(e) = direct::send(user_id, &text, &settings.token()) {
+                            warn!("failed to send a direct message {:?}\ncaused by: {:?}", text, e);
+                        },
+                        MessageMethod::Reply => {
+                            match user::show(user_id, &settings.token()) {
+                                Ok(user) => {
+                                    let text = format!("@{} {}", user.screen_name, text);
+                                    if let Err(e) = DraftTweet::new(&text).send(&settings.token()) {
+                                        warn!("failed to send a reply {:?}\ncaused by: {:?}", text, e);
+                                    }
+                                },
+                                Err(e) => warn!(
+                                    "failed to retrieve the user information of {}\ncaused by {:?}", user_id, e
+                                ),
+                            }
+                        }
                     }
                 }
 
@@ -188,19 +213,45 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
 }
 
 fn reply(tweet: Tweet, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<UserMap>,
-    settings: &Settings) -> Result<()>
+    settings: &Settings, url_len: (i32, i32)) -> Result<()>
 {
-    unimplemented!();
+    let id = tweet.id;
+
+     // Remove @user_name
+    let text = tweet.text.split_at(tweet.text.find(' ').unwrap() + 1).1;
+
+    let mut response = String::from("@");
+    response.push_str(&tweet.user.screen_name);
+
+    let body = ::message::message(
+        MessageMethod::Reply, text, tweet.user, tweet.in_reply_to_screen_name.unwrap(), tweet.in_reply_to_status_id,
+        users, tweeted, settings
+    )?;
+
+    if ! body.is_empty() {
+        response.push(' ');
+
+        let mut body = escape(body).into_owned();
+        util::shorten_tweet(&mut body, 140 - response.len(), url_len);
+
+        response.push_str(&body);
+
+        if let Err(e) = DraftTweet::new(&response).in_reply_to(id).send(&settings.token()) {
+            warn!("failed to send a reply {:?}\ncaused by: {:?}", response, e);
+        }
+    }
+
+    Ok(())
 }
 
 fn direct_message(dm: DirectMessage, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<UserMap>,
     settings: &Settings, dm_text_limit: usize) -> Result<()>
 {
     let mut response = ::message::message(
-        &dm.text, dm.sender, users, dm.recipient.screen_name, tweeted, settings, None
+        MessageMethod::Dm, &dm.text, dm.sender, dm.recipient.screen_name, None, users, tweeted, settings
     )?;
 
-    if !response.is_empty() {
+    if ! response.is_empty() {
         util::shorten(&mut response, dm_text_limit);
         if let Err(e) = direct::send(dm.sender_id, &response, &settings.token()) {
             warn!("failed to send a direct message {:?}\ncaused by: {:?}", response, e);
@@ -212,31 +263,10 @@ fn direct_message(dm: DirectMessage, tweeted: &mut SyncFile<Tweeted>, users: &mu
 
 fn format_tweet(dept: &str, k: &Kyuko, url: &str, url_len: (i32, i32)) -> String {
     use chrono::Datelike;
-    use egg_mode::text::character_count;
-    use std::borrow::Cow;
+    use egg_mode::text;
     use std::fmt::Write;
 
     const WDAYS: [char; 7] = ['月', '火', '水', '木', '金', '土', '日'];
-
-    fn escape(s: &str) -> Cow<str> {
-        let mut s: Cow<str> = s.into();
-
-        macro_rules! replace {
-            ($c:expr) => {
-                if s.contains($c) {
-                    s = s.replace($c, concat!($c, ' ')).into();
-                }
-            }
-        }
-
-        replace!('#');
-        replace!('@');
-        replace!('$');
-        replace!('＃');
-        replace!('＠');
-
-        s
-    }
 
     let mut ret = format!(
         "\
@@ -252,18 +282,30 @@ fn format_tweet(dept: &str, k: &Kyuko, url: &str, url_len: (i32, i32)) -> String
         write!(ret, "{}\n", escape(r.as_str())).unwrap();
     }
 
-    let mut len = character_count(&ret, url_len.0, url_len.1).0 + 1 + character_count(url, url_len.0, url_len.1).0;
-    if len > 140 {
-        while len > 140 {
-            let c = ret.pop();
-            debug_assert!(c.is_some());
-            len -= 1;
-        }
-        ret.pop();
-        ret.push('…');
-    }
-
-    write!(ret, "\n{}", url).unwrap();
+    let suffix_len = 1 + text::character_count(url, url_len.0, url_len.1).0;
+    util::shorten_tweet(&mut ret, 140 - suffix_len, url_len);
+    ret.push('\n');
+    ret.push_str(url);
 
     ret
+}
+
+fn escape<'a, S: Into<Cow<'a, str>>>(s: S) -> Cow<'a, str> {
+    let mut s: Cow<str> = s.into();
+
+    macro_rules! replace {
+        ($c:expr) => {
+            if s.contains($c) {
+                s = s.replace($c, concat!($c, ' ')).into();
+            }
+        }
+    }
+
+    replace!('#');
+    replace!('@');
+    replace!('$');
+    replace!('＃');
+    replace!('＠');
+
+    s
 }

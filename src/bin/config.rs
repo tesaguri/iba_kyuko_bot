@@ -4,13 +4,13 @@ use errors::*;
 use iba_kyuko_bot::Kyuko;
 use schedule::UnitSchedule;
 use std::collections::HashMap;
-use std::fmt::{self, Formatter};
+use std::fmt::{self, Formatter, Write};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use twitter_stream::messages::UserId;
 use util::SyncFile;
 
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Follow {
     #[serde(rename = "pattern")]
     Pattern {
@@ -22,9 +22,18 @@ pub enum Follow {
     TweetId(u64),
 }
 
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct FollowEntry(pub Follow, pub MessageMethod);
+
 pub enum FollowError {
     AlreadyFollowing(String),
     TweetDoesNotExist(u64),
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+pub enum MessageMethod {
+    Dm,
+    Reply,
 }
 
 #[derive(Deserialize)]
@@ -46,16 +55,6 @@ pub fn default_user_agent() -> String {
     concat!(env!("CARGO_PKG_NAME"), '/', env!("CARGO_PKG_VERSION"), " (+", env!("CARGO_PKG_HOMEPAGE"), ')').to_owned()
 }
 
-#[derive(Default, Serialize, Deserialize)]
-pub struct UserInfo {
-    pub following: HashMap<
-        String, // id
-        Follow
-    >,
-    pub next_id: u64,
-    // TODO: rate limit
-}
-
 pub type Tweeted = HashMap<
     String, // source URL
     HashMap<
@@ -63,6 +62,16 @@ pub type Tweeted = HashMap<
         Kyuko
     >
 >;
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct UserInfo {
+    pub following: HashMap<
+        String, // id
+        FollowEntry
+    >,
+    pub next_id: u64,
+    // TODO: rate limit
+}
 
 pub type UserMap = HashMap<
     String, // user id
@@ -109,6 +118,17 @@ impl Follow {
     }
 }
 
+impl fmt::Display for MessageMethod {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use self::MessageMethod::*;
+
+        match *self {
+            Dm => f.write_str("DM"),
+            Reply => f.write_char('@'),
+        }
+    }
+}
+
 impl Settings {
     pub fn token(&self) -> Token {
         Token::Access {
@@ -136,14 +156,25 @@ impl UserInfo {
         self.next_id = 0;
     }
 
-    pub fn follow<'a>(&mut self, target: Follow, tweeted: &'a SyncFile<Tweeted>)
+    pub fn follow<'a>(&mut self, target: Follow, via: MessageMethod, tweeted: &'a SyncFile<Tweeted>)
     -> ::std::result::Result<(String, Either<(String, Option<String>), (u64, &'a Kyuko)>), FollowError>
     {
         use self::Follow::*;
         use self::FollowError::*;
 
-        if let Some((id, _)) = self.following.iter().find(|&(_, flw)| flw == &target) {
-            return Err(AlreadyFollowing(id.to_owned()));
+        {
+            let mut replace = None;
+
+            if let Some((id, ent)) = self.following.iter().find(|&(_, ent)| ent.0 == target) {
+                if ent.1 == via {
+                    return Err(AlreadyFollowing(id.to_owned()));
+                }
+                replace = Some(id.to_owned());
+            }
+
+            if let Some(ref id) = replace {
+                self.following.remove(id);
+            }
         }
 
         let ret = match target.clone() {
@@ -159,7 +190,7 @@ impl UserInfo {
         };
 
         let id = self.next_id.to_string();
-        self.following.insert(id.clone(), target);
+        self.following.insert(id.clone(), FollowEntry(target, via));
         self.next_id += 1;
 
         Ok((id, ret))
