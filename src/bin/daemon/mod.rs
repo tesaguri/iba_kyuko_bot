@@ -12,7 +12,7 @@ use schedule::Schedule;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
-use twitter_stream::messages::{DirectMessage, StreamMessage, Tweet};
+use twitter_stream::{DirectMessage, StreamMessage, Tweet, TwitterJsonStream};
 use util::{self, SyncFile};
 
 pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, settings: Settings, archive: File)
@@ -21,7 +21,6 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     use egg_mode::{self, service, Response};
     use futures::{Future, Stream};
     use json;
-    use twitter_stream::TwitterJsonStream;
 
     enum TweetOrDm {
         Dm(DirectMessage),
@@ -29,7 +28,7 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     }
 
     let (url_len, dm_text_limit) = {
-        let conf = service::config(&settings.token())
+        let conf = service::config(&settings.token.clone().into())
             .chain_err(|| "failed to fetch Twitter's service config")?
             .response;
         ((conf.short_url_length, conf.short_url_length_https), conf.dm_text_character_limit as usize)
@@ -38,25 +37,22 @@ pub fn run(mut tweeted: SyncFile<Tweeted>, mut users: SyncFile<UserMap>, setting
     let tz = Local;
     let schedule = Schedule::new(&settings.schedule, &tz);
 
-    let Response { response: TwitterUser { id, .. }, .. } = egg_mode::verify_tokens(&settings.token())
+    let Response { response: TwitterUser { id, .. }, .. } = egg_mode::verify_tokens(&settings.token.clone().into())
         .chain_err(|| "failed to retrieve the information of the authenticating user")?;
 
-    let messages = TwitterJsonStream::user(
-        &settings.consumer_key, &settings.consumer_secret,
-        &settings.access_key, &settings.access_secret
-    )
+    let messages = TwitterJsonStream::user(&settings.token)
         .chain_err(|| "failed to connect to User Stream")?
         .then(|r| r.chain_err(|| "an error occured while listening on User Stream"))
         .filter_map(|json| match json::from_str(&json) {
             Ok(StreamMessage::Tweet(t)) => if t.in_reply_to_user_id == Some(id) {
-                Some(TweetOrDm::Tweet(t))
+                Some(TweetOrDm::Tweet(*t))
             } else {
                 // XXX: This clause can be removed after RFC 0107 was implemented.
                 // cf. https://github.com/rust-lang/rfcs/blob/master/text/0107-pattern-guards-with-bind-by-move.md
                 None
             },
             Ok(StreamMessage::DirectMessage(dm)) => if dm.recipient_id == id {
-                Some(TweetOrDm::Dm(dm))
+                Some(TweetOrDm::Dm(*dm))
             } else {
                 None
             },
@@ -167,7 +163,7 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
 
                 // Post the information to Twitter:
                 let id = DraftTweet::new(&text)
-                    .send(&settings.token())
+                    .send(&settings.token.clone().into())
                     .chain_err(|| format!("failed to post a Tweet: {:?}", text))?
                     .id;
                 info!("successfully tweeted: status_id = {}\n{}", id, text);
@@ -185,14 +181,16 @@ fn update(tweeted: &mut SyncFile<Tweeted>, users: &SyncFile<UserMap>, settings: 
                     let user_id: u64 = user_id.parse()
                         .chain_err(|| format!("invalid user ID in {:?}", users.file_name()))?;
                     match via {
-                        MessageMethod::Dm => if let Err(e) = direct::send(user_id, &text, &settings.token()) {
-                            warn!("failed to send a direct message {:?}\ncaused by: {:?}", text, e);
+                        MessageMethod::Dm => {
+                            if let Err(e) = direct::send(user_id, &text, &settings.token.clone().into()) {
+                                warn!("failed to send a direct message {:?}\ncaused by: {:?}", text, e);
+                            }
                         },
                         MessageMethod::Reply => {
-                            match user::show(user_id, &settings.token()) {
+                            match user::show(user_id, &settings.token.clone().into()) {
                                 Ok(user) => {
                                     let text = format!("@{} {}", user.screen_name, text);
-                                    if let Err(e) = DraftTweet::new(&text).send(&settings.token()) {
+                                    if let Err(e) = DraftTweet::new(&text).send(&settings.token.clone().into()) {
                                         warn!("failed to send a reply {:?}\ncaused by: {:?}", text, e);
                                     }
                                 },
@@ -238,7 +236,7 @@ fn reply(tweet: Tweet, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<Use
 
         response.push_str(&body);
 
-        if let Err(e) = DraftTweet::new(&response).in_reply_to(id).send(&settings.token()) {
+        if let Err(e) = DraftTweet::new(&response).in_reply_to(id).send(&settings.token.clone().into()) {
             warn!("failed to send a reply {:?}\ncaused by: {:?}", response, e);
         }
     }
@@ -255,7 +253,7 @@ fn direct_message(dm: DirectMessage, tweeted: &mut SyncFile<Tweeted>, users: &mu
 
     if ! response.is_empty() {
         util::shorten(&mut response, dm_text_limit);
-        if let Err(e) = direct::send(dm.sender_id, &response, &settings.token()) {
+        if let Err(e) = direct::send(dm.sender_id, &response, &settings.token.clone().into()) {
             warn!("failed to send a direct message {:?}\ncaused by: {:?}", response, e);
         }
     }

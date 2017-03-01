@@ -2,7 +2,8 @@ use config::*;
 use errors::*;
 use std::borrow::Cow;
 use std::fmt::Write;
-use twitter_stream::messages::{StatusId, User};
+use twitter_stream::User;
+use twitter_stream::tweet::StatusId;
 use util::SyncFile;
 
 const WRITE_FAILED: &'static str = "failed to write a message to a String";
@@ -56,9 +57,9 @@ pub fn message(via: MessageMethod, text: &str, sender: User, recipient_screen_na
             Some("list") => list(&mut resp, sender_info!(), lang, &recipient_screen_name)?,
             Some("rem") => (), // noop
             Some("admin") if settings.admins.contains(&sender.id) => match tokens.next() {
-                Some("clear") => admin::clear(tweeted, &settings.token())?,
+                Some("clear") => admin::clear(tweeted, &settings.token.clone().into())?,
                 Some("clear-users") => admin::clear_users(users)?,
-                Some("remove") => admin::remove(tokens, tweeted, &settings.token())?,
+                Some("remove") => admin::remove(tokens, tweeted, &settings.token.clone().into())?,
                 Some("shutdown") => process::exit(0), // TODO: graceful shutdown
                 Some(cmd) => unknown!(cmd),
                 None => (),

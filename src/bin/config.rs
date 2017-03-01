@@ -1,4 +1,3 @@
-use egg_mode::{KeyPair, Token};
 use either::{Either, Left, Right};
 use errors::*;
 use iba_kyuko_bot::Kyuko;
@@ -7,7 +6,8 @@ use std::collections::HashMap;
 use std::fmt::{self, Formatter, Write};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-use twitter_stream::messages::UserId;
+use twitter_stream::Token;
+use twitter_stream::user::UserId;
 use util::SyncFile;
 
 #[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -42,10 +42,7 @@ pub struct Settings {
     pub schedule: Vec<UnitSchedule>,
     #[serde(default)]
     pub admins: Vec<UserId>,
-    pub consumer_key: String,
-    pub consumer_secret: String,
-    pub access_key: String,
-    pub access_secret: String,
+    pub token: Token<'static>,
     #[serde(default = "default_user_agent")]
     pub user_agent: String,
     pub urls: Vec<String>,
@@ -125,15 +122,6 @@ impl fmt::Display for MessageMethod {
         match *self {
             Dm => f.write_str("DM"),
             Reply => f.write_char('@'),
-        }
-    }
-}
-
-impl Settings {
-    pub fn token(&self) -> Token {
-        Token::Access {
-            consumer: KeyPair::new(self.consumer_key.as_str(), self.consumer_secret.as_str()),
-            access: KeyPair::new(self.access_key.as_str(), self.access_secret.as_str()),
         }
     }
 }

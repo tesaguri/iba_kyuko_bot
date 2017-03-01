@@ -23,7 +23,7 @@ serde_derive = "0.9"
 serde_json = "0.9"
 serde_yaml = "0.6"
 tendril = "*"
-twitter-stream = "*"
+twitter-stream = { version = "0.2", features = ["egg-mode"] }
 
 [[bin]]
 name = "iba_kyuko_bot"

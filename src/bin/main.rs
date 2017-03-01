@@ -24,7 +24,7 @@ extern crate twitter_stream;
 
 mod admin;
 mod config;
-mod daemon_main;
+mod daemon;
 mod schedule;
 mod util;
 
@@ -83,10 +83,10 @@ fn run() -> Result<()> {
     if matches.is_present("clear-users") {
         admin::clear_users(&mut users)
     } else if matches.is_present("clear") {
-        admin::clear(&mut tweeted, &settings.token())
+        admin::clear(&mut tweeted, &settings.token.clone().into())
     } else if let Some(ids) = matches.values_of("remove") {
-        admin::remove(ids, &mut tweeted, &settings.token())
+        admin::remove(ids, &mut tweeted, &settings.token.clone().into())
     } else {
-        daemon_main::run(tweeted, users, settings, archive)
+        daemon::run(tweeted, users, settings, archive)
     }
 }
