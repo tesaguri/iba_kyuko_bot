@@ -25,7 +25,6 @@ extern crate twitter_stream;
 mod admin;
 mod config;
 mod daemon_main;
-mod message;
 mod schedule;
 mod util;
 

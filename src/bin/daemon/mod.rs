@@ -1,3 +1,5 @@
+mod message;
+
 use chrono::Local;
 use config::*;
 use egg_mode::direct;
@@ -223,7 +225,7 @@ fn reply(tweet: Tweet, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<Use
     let mut response = String::from("@");
     response.push_str(&tweet.user.screen_name);
 
-    let body = ::message::message(
+    let body = message::message(
         MessageMethod::Reply, text, tweet.user, tweet.in_reply_to_screen_name.unwrap(), tweet.in_reply_to_status_id,
         users, tweeted, settings
     )?;
@@ -247,7 +249,7 @@ fn reply(tweet: Tweet, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<Use
 fn direct_message(dm: DirectMessage, tweeted: &mut SyncFile<Tweeted>, users: &mut SyncFile<UserMap>,
     settings: &Settings, dm_text_limit: usize) -> Result<()>
 {
-    let mut response = ::message::message(
+    let mut response = message::message(
         MessageMethod::Dm, &dm.text, dm.sender, dm.recipient.screen_name, None, users, tweeted, settings
     )?;
 
